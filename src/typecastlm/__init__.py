@@ -16,7 +16,8 @@ carry seven gigabytes of weights and a deep-learning stack.
 Running the model yourself is a separate matter and needs no client: the checkpoint is an ordinary
 three-label classifier, so `transformers` loads it directly — see the model card.
 """
-from .remote import Answer, Client
+from .calibrate import calibrate
+from .remote import Answer, Client, Ternary
 
-__all__ = ["Client", "Answer"]
+__all__ = ["Client", "Answer", "Ternary", "calibrate"]
 __version__ = "0.1.0"

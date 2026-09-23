@@ -70,6 +70,63 @@ well of the place" decides more cleanly than "positive".
 ranking is far better than the default cut, so a threshold chosen on a hundred of your own
 documents is worth more than any default.
 
+## Calibration
+
+Two things are true at once, and keeping them apart is the whole of this section.
+
+**Calibration adds no knowledge.** It changes no ordering: macro AUC is 0.817 before and 0.820
+after. A document that ranked above another still does.
+
+**Calibration decides whether the numbers are usable.** Without it this reader is badly
+overconfident — it says 0.99 where it is right 85% of the time — and its third answer never wins:
+`argmax` picks `unsure` on 4% of rows where a third of the material is undecidable.
+
+Three knobs, one job each:
+
+| knob | what it moves | what it leaves alone |
+|---|---|---|
+| temperature | confidence, calibration error | every decision and every ordering |
+| shift on `false` | the threshold between yes and no | orderings |
+| shift on `unsure` | how often the reader declines | orderings |
+
+A softmax cannot tell a common shift from nothing, so there are **two** shifts for three answers,
+not three.
+
+### What ships, and what it was fitted on
+
+Defaults travel with the checkpoint (`prompt.json`) and the service passes them to the client,
+which applies them unless told otherwise. Both were fitted on FEVER's dev split, half for fitting
+and half for the numbers below:
+
+| mode | numbers | effect, held out |
+|---|---|---|
+| binary (`noul`) | temperature 3.48, shift on `false` −0.54 | calibration error 0.127 → 0.069, accuracy 0.852 → 0.858 |
+| three answers (`tfu`) | temperature 4.33, shifts +0.18 and +1.64 | three-class accuracy 0.604 → 0.666, calibration error 0.352 → 0.085, `unsure` wins argmax on 25% of rows instead of 4% |
+
+**The temperature should travel; the shifts should not.** Overconfidence is a property of the
+model. The shifts encode how often the answer is yes and how often nothing decides it — properties
+of FEVER, where a third of the input is undecidable by construction. On data where little is
+undecidable they will abstain far too often.
+
+### Fitting your own
+
+Two hundred labelled documents are enough, because there are only three free numbers:
+
+```python
+from typecastlm import Client, calibrate
+
+c = Client(calibrated=False)                  # raw logits, nothing applied
+rows = [(c.noul(text, question, true=T, false=F).logits, gold)   # gold: true / false / unsure
+        for text, gold in my_labelled_sample]
+
+cal = calibrate(rows)
+c = Client(temperature=cal["temperature"], shift=tuple(cal["shift"][1:]))
+```
+
+`Client(calibrated=False)` switches the shipped defaults off — the right thing when you threshold
+`p(unsure)` yourself rather than reading `argmax`, since a threshold you choose on your own data
+already does what the shifts do.
+
 ## What version zero does, and what it does not
 
 | | |

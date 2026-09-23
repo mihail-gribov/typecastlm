@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from pathlib import Path
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3-3.5b"
@@ -50,9 +49,13 @@ class Reader:
         self.labels = [self.model.config.id2label[i] for i in range(self.model.config.num_labels)]
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
+        limit = getattr(self.model.config, "max_position_embeddings", None)
+        if limit and self.max_state_tokens > limit:
+            raise ValueError(f"--max-state-tokens {self.max_state_tokens} is past what the model "
+                             f"can attend to ({limit} positions)")
         self.check(strict=strict)
 
-    EXPECTED = ("true", "false", "unknown")
+    EXPECTED = ("true", "false", "unsure")
     PROMPT_FIELDS = ("system", "format_two", "means_two", "body", "tail", "max_state_tokens")
 
     def check(self, strict: bool = True) -> list[str]:
@@ -130,11 +133,13 @@ class Reader:
             text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         return text + C["tail"]
 
+    KINDS = ("noul", "tfu")
+
     def answer(self, state: str, q: dict) -> tuple[dict, int]:
         kind = q.get("type", "noul")
-        if kind != "noul":
-            raise ValueError(f"question type {kind!r} is not implemented; version zero answers "
-                             f"'noul' — a binary question, with `unknown` returned beside it")
+        if kind not in self.KINDS:
+            raise ValueError(f"question type {kind!r} is not implemented; this service answers "
+                             f"{self.KINDS}")
         crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
         if len(crit) != 2:
             raise ValueError("a question takes exactly two criteria; the third answer is read "
@@ -143,44 +148,65 @@ class Reader:
         prompt = self.build(state, q["instructions"], t, f)
         enc = self.tok([prompt], return_tensors="pt", add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
-            p = self.torch.softmax(self.model(**enc).logits[0].float(), -1).cpu().tolist()
+            z = self.model(**enc).logits[0].float()
+            p = self.torch.softmax(z, -1).cpu().tolist()
+        # Ответ один на оба типа вопроса: сервер даёт три числа, а всякое чтение — `noul` по
+        # двум, `tfu` по трём, любая температура — выводится из них на стороне спрашивающего.
+        # Считать здесь то же самое дважды значило бы завести второе место, где это можно
+        # разойтись.
+        logits = dict(zip(self.labels, (float(v) for v in z.cpu())))
         decided = p[0] + p[1]
-        # Только договорное поле и одно расширение: словарь вероятностей — это `choice`, а он
-        # ещё не реализован, и заводить его половину под видом `noul` не стоит.
         return ({"noul": p[0] / decided if decided > 0 else 0.5,
-                 "unknown": p[2] if len(p) > 2 else 0.0},
+                 "unknown": p[2] if len(p) > 2 else 0.0, "logits": logits},
                 int(enc["attention_mask"].sum()))
 
 
-def build_app(reader: Reader):
-    from fastapi import FastAPI, HTTPException
+def _request_model():
+    """Тело запроса объявляется на уровне модуля, а не внутри фабрики.
+
+    В модуле стоит `from __future__ import annotations`, поэтому аннотации — строки, и FastAPI
+    разрешает их в пространстве имён МОДУЛЯ. Класс, объявленный внутри функции, там не виден, и
+    тело запроса молча превращается в параметр строки запроса: сервер отвечает 422 на совершенно
+    правильный POST.
+    """
     from pydantic import BaseModel
 
-    class Request(BaseModel):
+    class Ask(BaseModel):
         state: str
         questions: dict
         model: str | None = None
 
+    return Ask
+
+
+def build_app(reader: Reader):
+    from fastapi import FastAPI, HTTPException
+
+    Ask = _request_model()
+    globals()["Ask"] = Ask                     # чтобы аннотация-строка разрешилась
     app = FastAPI(title="typecastlm", version="0.1.0")
 
     @app.get("/health")
     def health() -> dict:
         return {"model": reader.name, "labels": reader.labels, "device": str(reader.device),
-                "prompt": reader.prompt_source,
+                "prompt": reader.prompt_source, "max_state_tokens": reader.max_state_tokens,
+                "calibration": reader.prompt_cfg.get("calibration", {}),
                 "checks": reader.check(strict=False) or "ok"}
 
     @app.post("/v1/typecast")
-    def typecast(req: Request) -> dict:
+    def typecast(req: "Ask") -> dict:
         if len(req.questions) != 1:
             raise HTTPException(400, "version zero answers one question per call")
-        t0 = time.perf_counter()
         key, q = next(iter(req.questions.items()))
         try:
             ans, tokens = reader.answer(req.state, q)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        return {"answers": {key: ans}, "usage": {"input_tokens": tokens},
-                "model": reader.name, "ms": round((time.perf_counter() - t0) * 1000, 1)}
+        # Тело ровно такое, как у сервиса: `answers`, `usage`, `model`. Время меряет клиент —
+        # лишнее поле здесь было бы нашим, а не общим.
+        # Калибровка едет с ответом: она свойство чекпойнта, и клиент не должен её угадывать.
+        return {"answers": {key: ans}, "usage": {"input_tokens": tokens}, "model": reader.name,
+                "calibration": reader.prompt_cfg.get("calibration", {})}
 
     return app
 
@@ -192,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--dtype", default="bfloat16")
+    ap.add_argument("--max-state-tokens", type=int, default=None,
+                    help="сколько токенов состояния читать целиком; длиннее складывается серединой")
     ap.add_argument("--prompt", default=None,
                     help="свой шаблон вместо того, что приехал с весами (JSON тех же полей)")
     ap.add_argument("--no-strict", action="store_true",
@@ -202,8 +230,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"loading {a.model} …", flush=True)
     reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,
-                    prompt=a.prompt)
-    print(f"prompt: {reader.prompt_source}", flush=True)
+                    prompt=a.prompt, max_state_tokens=a.max_state_tokens)
+    print(f"prompt: {reader.prompt_source}; context {reader.max_state_tokens} tokens",
+          flush=True)
     print(f"checks: {reader.check(strict=False) or 'ok'}", flush=True)
     print(f"ready on {a.host}:{a.port}; labels {reader.labels}; device {reader.device}", flush=True)
     uvicorn.run(build_app(reader), host=a.host, port=a.port, log_level="info")

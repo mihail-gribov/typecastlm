@@ -5,7 +5,7 @@
   "means_two": "True means: {true}\nFalse means: {false}",
   "body": "\n\n<state>\n{state}\n</state>\n\nQuestion: {question}\n",
   "tail": "Answer: ",
-  "max_state_tokens": 1280,
+  "max_state_tokens": 32768,
   "criteria_default": {
     "true": "the answer to the question is yes",
     "false": "the answer to the question is no"
