@@ -39,7 +39,7 @@ class Reader:
 
         self.torch, self.name = torch, model
         self.tok = AutoTokenizer.from_pretrained(model)
-        self.tok.padding_side = "right"          # голова берёт правейший непадовый токен
+        self.tok.padding_side = "right"          # the head reads the rightmost non-pad token
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = AutoModelForSequenceClassification.from_pretrained(
@@ -150,10 +150,9 @@ class Reader:
         with self.torch.no_grad():
             z = self.model(**enc).logits[0].float()
             p = self.torch.softmax(z, -1).cpu().tolist()
-        # Ответ один на оба типа вопроса: сервер даёт три числа, а всякое чтение — `noul` по
-        # двум, `tfu` по трём, любая температура — выводится из них на стороне спрашивающего.
-        # Считать здесь то же самое дважды значило бы завести второе место, где это можно
-        # разойтись.
+        # One answer for both question types: the server gives three numbers, and every reading —
+        # `noul` over two, `tfu` over three, any temperature — follows from them on the asking
+        # side. Computing the same thing here as well would be a second place to drift.
         logits = dict(zip(self.labels, (float(v) for v in z.cpu())))
         decided = p[0] + p[1]
         return ({"noul": p[0] / decided if decided > 0 else 0.5,
@@ -162,12 +161,12 @@ class Reader:
 
 
 def _request_model():
-    """Тело запроса объявляется на уровне модуля, а не внутри фабрики.
+    """The request body is declared at module level, not inside the factory.
 
-    В модуле стоит `from __future__ import annotations`, поэтому аннотации — строки, и FastAPI
-    разрешает их в пространстве имён МОДУЛЯ. Класс, объявленный внутри функции, там не виден, и
-    тело запроса молча превращается в параметр строки запроса: сервер отвечает 422 на совершенно
-    правильный POST.
+    The module has `from __future__ import annotations`, so annotations are strings and FastAPI
+    resolves them in the MODULE namespace. A class defined inside a function is invisible there,
+    and the request body silently becomes a query parameter: the server answers 422 to a
+    perfectly good POST.
     """
     from pydantic import BaseModel
 
@@ -183,7 +182,7 @@ def build_app(reader: Reader):
     from fastapi import FastAPI, HTTPException
 
     Ask = _request_model()
-    globals()["Ask"] = Ask                     # чтобы аннотация-строка разрешилась
+    globals()["Ask"] = Ask                     # so the string annotation resolves
     app = FastAPI(title="typecastlm", version="0.1.0")
 
     @app.get("/health")
@@ -202,9 +201,9 @@ def build_app(reader: Reader):
             ans, tokens = reader.answer(req.state, q)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        # Тело ровно такое, как у сервиса: `answers`, `usage`, `model`. Время меряет клиент —
-        # лишнее поле здесь было бы нашим, а не общим.
-        # Калибровка едет с ответом: она свойство чекпойнта, и клиент не должен её угадывать.
+        # The body is exactly the service's: `answers`, `usage`, `model`. Timing is the client's
+        # business — an extra field here would be ours rather than shared.
+        # The calibration rides along: it belongs to the checkpoint, and a client should not guess it.
         return {"answers": {key: ans}, "usage": {"input_tokens": tokens}, "model": reader.name,
                 "calibration": reader.prompt_cfg.get("calibration", {})}
 
@@ -219,11 +218,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--device", default="auto")
     ap.add_argument("--dtype", default="bfloat16")
     ap.add_argument("--max-state-tokens", type=int, default=None,
-                    help="сколько токенов состояния читать целиком; длиннее складывается серединой")
+                    help="how many state tokens to read in full; longer states are folded in the middle")
     ap.add_argument("--prompt", default=None,
-                    help="свой шаблон вместо того, что приехал с весами (JSON тех же полей)")
+                    help="your own template instead of the one shipped with the weights (same fields)")
     ap.add_argument("--no-strict", action="store_true",
-                    help="не отказываться от несовпавшей модели — только для отладки")
+                    help="serve a mismatched checkpoint anyway — for debugging only")
     a = ap.parse_args(argv)
 
     import uvicorn

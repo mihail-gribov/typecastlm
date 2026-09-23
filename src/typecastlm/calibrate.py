@@ -1,20 +1,21 @@
-"""Подгонка калибровки по своим размеченным строкам.
+"""Fitting the calibration on your own labelled rows.
 
-Калибровка не добавляет знания: порядок документов она не меняет вовсе (макро-AUC 0.817 против
-0.820 до и после). Она меняет ДВЕ вещи — куда попадает порог и насколько уверенно звучит ответ.
-Поэтому числа нужны свои: они кодируют, как часто в ВАШИХ данных ответ «да» и как часто решать
-нечем, а это свойство задачи, а не модели.
+Calibration adds no knowledge: it changes no ordering at all (macro AUC 0.817 before, 0.820
+after). It changes two other things — where the threshold falls, and how confident the answer
+sounds. Which is why the numbers have to be yours: they encode how often the answer is yes in
+YOUR data and how often nothing decides it, and that belongs to the task, not to the model.
 
-Ручек ровно три, и каждая делает своё:
+Three knobs, one job each:
 
-    температура   делит логиты; правит уверенность и ECE, решение не двигает совсем
-    сдвиг «нет»   двигает порог между «да» и «нет»
-    сдвиг «не знаю»  решает, как часто читатель отказывается отвечать
+    temperature       divides the logits; fixes confidence and calibration error, moves no decision
+    shift on `false`  moves the threshold between yes and no
+    shift on `unsure` decides how often the reader declines to answer
 
-Общий сдвиг софтмакс не различает, поэтому сдвигов именно два, а не три.
+A softmax cannot tell a common shift from nothing, so there are two shifts for three answers.
 
     from typecastlm import Client, calibrate
-    rows = [(client.noul(t, q, true=T, false=F).logits, gold) for t, gold in my_labelled]
+
+    rows = [(c.noul(t, q, true=T, false=F).logits, gold) for t, gold in my_labelled]
     cal = calibrate(rows)              # {'temperature': ..., 'shift': [...]}
     c = Client(temperature=cal["temperature"], shift=tuple(cal["shift"][1:]))
 """
@@ -34,20 +35,20 @@ def _softmax(v: list[float]) -> list[float]:
 
 def calibrate(rows: list[tuple[dict, str]], steps: int = 4000, lr: float = 0.05,
               fit_temperature: bool = True) -> dict:
-    """Три числа по размеченным строкам: `(логиты, правильный ответ)`.
+    """Three numbers from labelled rows, each a pair `(logits, correct answer)`.
 
-    `логиты` — словарь из ответа (`Answer.logits`), `правильный ответ` — одно из `true`, `false`,
-    `unsure`. Минимизируется кросс-энтропия; двести-триста строк обычно хватает, потому что
-    свободных чисел всего три.
+    `logits` is the dictionary an answer carries (`Answer.logits`); the correct answer is one of
+    `true`, `false`, `unsure`. Cross-entropy is minimised. Two or three hundred rows are usually
+    enough, because only three numbers are free.
     """
     if len(rows) < 30:
-        raise ValueError(f"тридцать строк — нижний предел, дано {len(rows)}")
+        raise ValueError(f"thirty rows is the floor, got {len(rows)}")
     Z = [[float(z[k]) for k in LABELS] for z, _ in rows]
-    Y = [LABELS.index(g) for _, g in rows]
-    if any(y is None for y in Y):
-        raise ValueError(f"метка должна быть одной из {LABELS}")
-    lt, b = 0.0, [0.0, 0.0, 0.0]
-    n = len(Z)
+    try:
+        Y = [LABELS.index(g) for _, g in rows]
+    except ValueError as e:
+        raise ValueError(f"every label must be one of {LABELS}") from e
+    lt, b, n = 0.0, [0.0, 0.0, 0.0], len(Z)
     for _ in range(steps):
         T = math.exp(lt)
         gb, glt = [0.0, 0.0, 0.0], 0.0
@@ -61,5 +62,5 @@ def calibrate(rows: list[tuple[dict, str]], steps: int = 4000, lr: float = 0.05,
             b[k] -= lr * gb[k]
         if fit_temperature:
             lt -= lr * glt
-    return {"temperature": math.exp(lt), "shift": b,
-            "rows": n, "note": "порядок документов это не меняет — только порог и уверенность"}
+    return {"temperature": math.exp(lt), "shift": b, "rows": n,
+            "note": "this changes no ordering — only the threshold and the confidence"}

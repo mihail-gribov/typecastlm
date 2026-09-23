@@ -26,7 +26,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Всё тяжёлое — здесь и только здесь: сервер держит веса, клиент о них не знает.
+# Everything heavy lives here and only here: the server holds the weights, the client
+# knows nothing about them.
 server = [
     "torch>=2.2",
     "transformers>=4.51",

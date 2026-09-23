@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Выкладка на PyPI. НЕ запускается сама — это публикация, и она необратима:
-# номер версии на PyPI занимается навсегда, перезалить его нельзя.
+# Publishing to PyPI. This never runs by itself: publication is irreversible — a version
+# number on PyPI is taken forever and cannot be re-uploaded.
 #
-#   ./publish.sh test     -> TestPyPI, для проверки
+#   ./publish.sh test     -> TestPyPI, for a rehearsal
 #   ./publish.sh          -> PyPI
 set -eu
 cd "$(dirname "$0")"
@@ -14,8 +14,8 @@ ls -la dist/
 if [ "${1:-}" = "test" ]; then
     uv publish --publish-url https://test.pypi.org/legacy/ dist/*
 else
-    echo "Это выкладка на PyPI под именем typecastlm 0.1.0. Ctrl-C, если не сейчас."
-    read -r -p "Продолжить? [y/N] " a
+    echo "This publishes typecastlm 0.1.0 to PyPI. Ctrl-C if not now."
+    read -r -p "Continue? [y/N] " a
     [ "$a" = "y" ] || exit 1
     uv publish dist/*
 fi

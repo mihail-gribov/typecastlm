@@ -125,8 +125,8 @@ class Client:
         self._s = requests.Session()
         self._s.mount("https://", HTTPAdapter(pool_connections=pool, pool_maxsize=pool))
         self._requests = requests
-        # Калибровка приезжает с ответом сервиса — она свойство чекпойнта, а не клиента. Явно
-        # заданные числа её перекрывают, `calibrated=False` выключает совсем.
+        # The calibration travels with the service's answer: it belongs to the checkpoint, not to
+        # the client. Numbers passed here override it, `calibrated=False` turns it off.
         if temperature is not None and temperature <= 0:
             raise ValueError(f"temperature must be positive, got {temperature}")
         if shift is not None and len(shift) != 2:
@@ -138,7 +138,7 @@ class Client:
         self.calibration: dict = {}
 
     def _use(self, mode: str) -> tuple[float, tuple[float, float]]:
-        """Температура и два сдвига для режима: своё, потом присланное, потом ничего."""
+        """Temperature and the two shifts for a mode: the caller's, then the service's, then none."""
         c = (self.calibration or {}).get(mode, {}) if self.calibrated else {}
         t = self._own["temperature"] or float(c.get("temperature", 1.0))
         if self._own["shift"] is not None:
@@ -169,7 +169,7 @@ class Client:
         raise RuntimeError("unreachable")
 
     def _three(self, logits: dict, mode: str = "ternary") -> dict[str, float]:
-        """Три вероятности из трёх логитов при калибровке выбранного режима."""
+        """Three probabilities from three logits, calibrated for the mode asked for."""
         t, sh = self._use(mode)
         b = (0.0,) + tuple(sh)
         v = {n: (z + s) / t for (n, z), s in zip(logits.items(), b)}
@@ -219,8 +219,8 @@ class Client:
         a = data["answers"]["q"]
         z = a.get("logits")
         if z:
-            # Из логитов всё считается точно: маржа это разность, а не логарифм округлённой
-            # вероятности, и на уверенных документах она не упирается в потолок зажима.
+            # From logits everything follows exactly: the margin is a difference, not the logarithm of
+            # a rounded probability, so on confident documents it does not hit a clamp.
             names = list(z)
             p3 = self._three(z, "binary")
             decided = p3[names[0]] + p3[names[1]]
@@ -228,7 +228,7 @@ class Client:
             t, sh = self._use("binary")
             margin = (z[names[0]] - (z[names[1]] + sh[0])) / t
             unknown = p3[names[2]] if len(names) > 2 else 0.0
-        else:                                   # сервис прислал только вероятность
+        else:                                   # the service sent a probability and nothing else
             prob = float(a["noul"])
             pc = min(max(prob, 1e-6), 1 - 1e-6)
             margin, unknown, p3 = math.log(pc / (1 - pc)), float(a.get("unknown", 0.0)), None
