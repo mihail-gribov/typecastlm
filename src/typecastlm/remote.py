@@ -31,7 +31,12 @@ RETRY_CODES = (408, 429, 500, 502, 503, 504, 529)
 
 @dataclass
 class Answer:
-    """What `noul` returns. Every field but `unknown` is the service's; `unknown` is the extension."""
+    """What `noul` returns.
+
+    `prob`, `margin`, `ms`, `input_tokens` and `model` are the service's fields. `unknown` and
+    `p` are the extensions: the weight of "nothing here decides it", and the three probabilities
+    under whatever names the caller asked for.
+    """
 
     prob: float
     margin: float
@@ -39,6 +44,7 @@ class Answer:
     input_tokens: int
     model: str
     unknown: float = 0.0
+    p: dict[str, float] | None = None
 
 
 class Client:
@@ -51,7 +57,13 @@ class Client:
 
     def __init__(self, endpoint: str | None = None, api_key: str | None = None,
                  model: str = "typecastlm-qwen3-3.5b", timeout: float = 10.0, retries: int = 5,
-                 pool: int = 32):
+                 pool: int = 32, labels: tuple[str, str, str] | None = None):
+        """`labels` renames the three outputs on the way out — and only that.
+
+        Which row means what is fixed by the checkpoint and checked by the service; a name is for
+        whoever reads the answer. Renaming is safe, reordering is not, so there is no way to ask
+        for the second one here.
+        """
         import requests
         from requests.adapters import HTTPAdapter
 
@@ -61,6 +73,9 @@ class Client:
         self._s = requests.Session()
         self._s.mount("https://", HTTPAdapter(pool_connections=pool, pool_maxsize=pool))
         self._requests = requests
+        if labels is not None and len(labels) != 3:
+            raise ValueError(f"three outputs, three names; got {len(labels)}")
+        self.labels = tuple(labels) if labels else None
 
     def _post(self, body: dict) -> tuple[dict, float]:
         delay = 1.0
@@ -101,7 +116,10 @@ class Client:
         a = data["answers"]["q"]
         p = float(a["noul"])
         pc = min(max(p, 1e-6), 1 - 1e-6)
+        probs = a.get("probabilities")
+        if probs and self.labels:
+            probs = dict(zip(self.labels, probs.values()))     # переименование, порядок тот же
         return Answer(prob=p, margin=math.log(pc / (1 - pc)), ms=ms,
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
                       model=str(data.get("model", self.model)),
-                      unknown=float(a.get("unknown", 0.0)))
+                      unknown=float(a.get("unknown", 0.0)), p=probs)
