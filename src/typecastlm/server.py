@@ -34,7 +34,7 @@ class Reader:
 
     def __init__(self, model: str = DEFAULT_MODEL, device: str = "auto",
                  dtype: str = "bfloat16", max_state_tokens: int | None = None,
-                 strict: bool = True):
+                 strict: bool = True, prompt: str | Path | None = None):
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -48,7 +48,7 @@ class Reader:
         self.model.requires_grad_(False)
         self.device = next(self.model.parameters()).device
         self.labels = [self.model.config.id2label[i] for i in range(self.model.config.num_labels)]
-        self.prompt_cfg = self._prompt(model)
+        self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         self.check(strict=strict)
 
@@ -83,13 +83,34 @@ class Reader:
         return bad
 
     @staticmethod
-    def _prompt(model: str) -> dict:
+    def _prompt(model: str, override: str | Path | None) -> tuple[dict, str]:
+        """Which wording to use, and where it came from.
+
+        Three sources, and which one is in play has to stay visible. The measured wording ships
+        beside the weights: the numbers in the model card are true of THAT wording and of no
+        other. An override replaces it on purpose — a different question style, another language
+        — and from then on the card's numbers describe something else, which is why the source is
+        reported in `/health` rather than quietly assumed.
+
+        The copy inside this package is the last resort, for a checkpoint that predates the file
+        or a machine that cannot reach the Hub. It may not match those weights at all.
+        """
+        if override:
+            return json.loads(Path(override).read_text(encoding="utf-8")), f"override: {override}"
         p = Path(model) / "prompt.json"
         if p.exists():
-            return json.loads(p.read_text(encoding="utf-8"))
-        from huggingface_hub import hf_hub_download
+            return json.loads(p.read_text(encoding="utf-8")), "model directory"
+        try:
+            from huggingface_hub import hf_hub_download
 
-        return json.loads(Path(hf_hub_download(model, "prompt.json")).read_text(encoding="utf-8"))
+            path = Path(hf_hub_download(model, "prompt.json"))
+            return json.loads(path.read_text(encoding="utf-8")), "model repository"
+        except Exception as e:
+            fb = Path(__file__).resolve().parent / "prompt_fallback.json"
+            print(f"typecastlm: no prompt.json with the weights ({type(e).__name__}); "
+                  f"falling back to the copy in the package — the measured numbers may not apply",
+                  flush=True)
+            return json.loads(fb.read_text(encoding="utf-8")), "package fallback"
 
     def build(self, state: str, instructions: str, true: str, false: str) -> str:
         C = self.prompt_cfg
@@ -142,6 +163,7 @@ def build_app(reader: Reader):
     @app.get("/health")
     def health() -> dict:
         return {"model": reader.name, "labels": reader.labels, "device": str(reader.device),
+                "prompt": reader.prompt_source,
                 "checks": reader.check(strict=False) or "ok"}
 
     @app.post("/v1/typecast")
@@ -167,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--dtype", default="bfloat16")
+    ap.add_argument("--prompt", default=None,
+                    help="свой шаблон вместо того, что приехал с весами (JSON тех же полей)")
     ap.add_argument("--no-strict", action="store_true",
                     help="не отказываться от несовпавшей модели — только для отладки")
     a = ap.parse_args(argv)
@@ -174,7 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
     print(f"loading {a.model} …", flush=True)
-    reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict)
+    reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,
+                    prompt=a.prompt)
+    print(f"prompt: {reader.prompt_source}", flush=True)
     print(f"checks: {reader.check(strict=False) or 'ok'}", flush=True)
     print(f"ready on {a.host}:{a.port}; labels {reader.labels}; device {reader.device}", flush=True)
     uvicorn.run(build_app(reader), host=a.host, port=a.port, log_level="info")

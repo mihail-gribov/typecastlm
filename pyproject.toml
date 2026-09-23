@@ -45,6 +45,7 @@ Homepage = "https://huggingface.co/mihailgribov/qwen3-layer30-reader"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/typecastlm"]
+artifacts = ["src/typecastlm/prompt_fallback.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

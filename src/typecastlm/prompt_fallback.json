@@ -1,0 +1,13 @@
+{
+  "note": "FALLBACK ONLY. The prompt that belongs to a checkpoint ships beside its weights; this copy is used when that file is missing or the Hub is unreachable, and it may not be the wording the checkpoint was measured with.",
+  "system": "You are a decision function inside a program. You judge the state you are given against one yes/no question and answer with a single word. You never explain.",
+  "format_two": "Answer format: one word, either True or False.",
+  "means_two": "True means: {true}\nFalse means: {false}",
+  "body": "\n\n<state>\n{state}\n</state>\n\nQuestion: {question}\n",
+  "tail": "Answer: ",
+  "max_state_tokens": 1280,
+  "criteria_default": {
+    "true": "the answer to the question is yes",
+    "false": "the answer to the question is no"
+  }
+}
