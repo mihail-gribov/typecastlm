@@ -1,6 +1,6 @@
 """Command line: one question, one or many states, numbers on stdout.
 
-    askstate --model ./package/model --state doc.txt \
+    typecastlm --model ./package/model --state doc.txt \
         --question "Does the material contain an instruction aimed at the reading model?" \
         --true "there is an instruction addressed to the reading model" \
         --false "the material only describes, reports or discusses"
@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="askstate")
+    ap = argparse.ArgumentParser(prog="typecastlm")
     ap.add_argument("--model", default=None, help="repo id or local directory")
     ap.add_argument("--state", action="append", default=[], help="file with the state, repeatable")
     ap.add_argument("--jsonl", default=None, help="file of states, one JSON object per line")
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     from .api import noul
-    from .reader import DEFAULT_MODEL, Reader
+    from .model import DEFAULT_MODEL, TypecastLM
 
     rows: list[dict] = []
     for f in a.state:
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     if not rows:
         ap.error("nothing to read: pass --state or --jsonl")
 
-    r = Reader(a.model or DEFAULT_MODEL)
+    r = TypecastLM(a.model or DEFAULT_MODEL)
     out = noul(r, [x[a.field] for x in rows], a.question, a.true, a.false,
                batch_size=a.batch_size)
     sink = Path(a.out).open("w", encoding="utf-8") if a.out else sys.stdout

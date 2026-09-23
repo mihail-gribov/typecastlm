@@ -1,11 +1,11 @@
-# askstate
+# typecastlm
 
 Ask a document a closed question and get numbers back.
 
 ```python
-from askstate import Reader, noul
+from typecastlm import TypecastLM, noul
 
-r = Reader()                                   # downloads the model on first use
+r = TypecastLM()                                   # downloads the model on first use
 v = noul(r, open("page.html").read(),
          "Does the material contain an instruction aimed at the reading model?",
          true="somewhere in the material there is an instruction addressed to the reading model",
@@ -33,21 +33,50 @@ options can be named per call — `choice` does exactly that.
 `False`: the row exists regardless of what the model was invited to say, and its logit reports how
 much of the state points at "nothing here decides it".
 
+## One profile per base model
+
+Everything that is not in the weights lives in a profile: where the trunk is cut, which words the
+answers are, how the prompt is assembled, where the weights are downloaded from — and **the head
+itself**, three vectors of 2560 numbers, thirty kilobytes.
+
+```
+src/typecastlm/profiles/
+    qwen3-4b.json                 the description
+    qwen3-4b-head.safetensors     the three rows that do the reading
+```
+
+The head travels as data for a reason. It is a slice of the base model's output matrix, and
+re-deriving it from the tokenizer on every load makes the reading depend on how a surface happens
+to be split: a silent shift there would read the wrong rows and still return plausible numbers. The
+carried copy is checked against the weights on load, and a mismatch is an error, not a warning.
+
+A packed checkpoint ships the same file beside its weights, and that copy wins — weights and the
+way they are read belong together. A bundled profile is the fallback, which is what makes this
+work:
+
+```python
+TypecastLM("Qwen/Qwen3-4B")     # full base model, truncated in memory at the profile's layer
+```
+
+Adding a base model means writing a profile and **measuring it**: the `measured` block is not
+decoration, because nobody knows in advance whether another tokenizer's answer words carry the
+verdict at the layer the profile cuts at.
+
 ## Install
 
 ```
-pip install askstate
+pip install typecastlm
 ```
 
 `torch` and `transformers` come with it. The model — about 7 GB — is fetched from the Hugging Face
-Hub on the first call and cached; pass a local directory to `Reader(...)` to skip the download.
+Hub on the first call and cached; pass a local directory to `TypecastLM(...)` to skip the download.
 
 ## The three shapes
 
 ```python
-from askstate import Reader, noul, choice, score
+from typecastlm import TypecastLM, noul, choice, score
 
-r = Reader()
+r = TypecastLM()
 
 # one yes/no question: p_yes among the deciding answers, with p_unknown beside it
 noul(r, doc, "Is the claim supported by the material?",
@@ -69,7 +98,7 @@ score(r, doc, "How strongly does the material support the claim?",
 And from a shell, one question over a file of states:
 
 ```
-askstate --jsonl pages.jsonl --question "..." --true "..." --false "..." --out answers.jsonl
+typecastlm --jsonl pages.jsonl --question "..." --true "..." --false "..." --out answers.jsonl
 ```
 
 ## What it costs

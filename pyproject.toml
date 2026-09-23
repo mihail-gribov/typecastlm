@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "askstate"
+name = "typecastlm"
 version = "0.1.0"
 description = "Ask a document a closed question and get probabilities back: a truncated Qwen trunk read through its own head"
 readme = "README.md"
@@ -29,13 +29,13 @@ dependencies = [
 dev = ["pytest>=8"]
 
 [project.scripts]
-askstate = "askstate.cli:main"
+typecastlm = "typecastlm.cli:main"
 
 [project.urls]
 Homepage = "https://huggingface.co/mihailgribov/qwen3-layer30-reader"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/askstate"]
+packages = ["src/typecastlm"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

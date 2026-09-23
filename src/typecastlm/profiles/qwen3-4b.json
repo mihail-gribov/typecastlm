@@ -1,0 +1,44 @@
+{
+  "name": "qwen3-4b",
+  "base_model": "Qwen/Qwen3-4B",
+  "weights": {
+    "repo": "mihailgribov/qwen3-layer30-reader",
+    "revision": "main",
+    "size_gb": 6.6,
+    "note": "Qwen3-4B trunk cut after block 30; no weight was retrained"
+  },
+  "cut_layer": 30,
+  "head": {
+    "file": "qwen3-4b-head.safetensors",
+    "rows": [
+      "yes",
+      "no",
+      "unknown"
+    ],
+    "shape": [
+      3,
+      2560
+    ],
+    "source": "rows of the output matrix for tokens 3007 ' True', 3557 ' False', 21693 ' Unknown'",
+    "fitted": false
+  },
+  "answers": {
+    "yes": "True",
+    "no": "False",
+    "unknown": "Unknown"
+  },
+  "system": "You are a decision function inside a program. You judge the state you are given against one yes/no question and answer with a single word. You never explain.",
+  "head_two": "Answer format: one word, either {a} or {b}.",
+  "head_many": "Answer format: one word, one of: {words}.",
+  "body": "\n\n<state>\n{state}\n</state>\n\nQuestion: {question}\n",
+  "tail": "Answer: ",
+  "max_state_tokens": 1280,
+  "enable_thinking": false,
+  "measured": {
+    "tasks": 12,
+    "mean_auc": 0.891,
+    "mean_accuracy": 0.797,
+    "mean_ece": 0.184,
+    "note": "twelve public binary tasks, 200 rows each; see the model card"
+  }
+}

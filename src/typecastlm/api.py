@@ -16,9 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .reader import Answer, Reader
-
-YES, NO, UNKNOWN = "True", "False", "Unknown"
+from .model import Answer, TypecastLM
 
 
 @dataclass(frozen=True)
@@ -35,7 +33,7 @@ class Verdict:
                 f"confidence={self.confidence:.3f})")
 
 
-def noul(reader: Reader, states: str | list[str], question: str, true: str, false: str,
+def noul(reader: TypecastLM, states: str | list[str], question: str, true: str, false: str,
          batch_size: int = 4) -> list[Verdict]:
     """One yes/no question. `true` and `false` say what each answer would mean.
 
@@ -43,17 +41,19 @@ def noul(reader: Reader, states: str | list[str], question: str, true: str, fals
     drag it towards a half: that case shows up in `p_unknown` instead, and the two numbers are
     meant to be read together.
     """
-    shown = {YES: true, NO: false}
-    out = reader.probs(states, question, shown, read=[YES, NO, UNKNOWN], batch_size=batch_size)
+    # Слова ответа берутся из профиля модели, а не из констант: у другой базовой модели они свои.
+    yes, no, unknown = (reader.answers[k] for k in ("yes", "no", "unknown"))
+    shown = {yes: true, no: false}
+    out = reader.probs(states, question, shown, read=[yes, no, unknown], batch_size=batch_size)
     v = []
     for a in out:
-        y, n, u = a.p[YES], a.p[NO], a.p[UNKNOWN]
+        y, n, u = a.p[yes], a.p[no], a.p[unknown]
         v.append(Verdict(p_yes=y / (y + n) if y + n > 0 else 0.5, p_unknown=u,
                          confidence=a.confidence, raw=a))
     return v
 
 
-def choice(reader: Reader, states: str | list[str], question: str, options: dict[str, str],
+def choice(reader: TypecastLM, states: str | list[str], question: str, options: dict[str, str],
            batch_size: int = 4) -> list[dict[str, float]]:
     """Named options, a probability each.
 
@@ -66,7 +66,7 @@ def choice(reader: Reader, states: str | list[str], question: str, options: dict
     return [a.p for a in reader.probs(states, question, options, batch_size=batch_size)]
 
 
-def score(reader: Reader, states: str | list[str], question: str, levels: dict[str, str],
+def score(reader: TypecastLM, states: str | list[str], question: str, levels: dict[str, str],
           batch_size: int = 4) -> list[dict]:
     """Described levels on a scale: their probabilities and the expected level.
 

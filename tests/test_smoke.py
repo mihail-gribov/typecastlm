@@ -1,25 +1,25 @@
-"""Smoke tests. The ones that need weights are skipped unless ASKSTATE_MODEL points at them."""
+"""Smoke tests. The ones that need weights are skipped unless TYPECASTLM_MODEL points at them."""
 from __future__ import annotations
 
 import os
 
 import pytest
 
-MODEL = os.environ.get("ASKSTATE_MODEL")
-needs_model = pytest.mark.skipif(not MODEL, reason="set ASKSTATE_MODEL to a model directory")
+MODEL = os.environ.get("TYPECASTLM_MODEL")
+needs_model = pytest.mark.skipif(not MODEL, reason="set TYPECASTLM_MODEL to a model directory")
 
 
 def test_imports():
-    import askstate
+    import typecastlm
 
-    assert {"Reader", "noul", "choice", "score"} <= set(askstate.__all__)
+    assert {"TypecastLM", "noul", "choice", "score"} <= set(typecastlm.__all__)
 
 
 @needs_model
 def test_prompt_shows_words_in_order():
-    from askstate import Reader
+    from typecastlm import TypecastLM
 
-    r = Reader(MODEL)
+    r = TypecastLM(MODEL)
     p = r.prompt("a document", "is it so?", {"True": "it is so", "False": "it is not"})
     assert "either True or False" in p
     assert p.index("True means:") < p.index("False means:")
@@ -28,9 +28,9 @@ def test_prompt_shows_words_in_order():
 
 @needs_model
 def test_third_answer_is_read_without_being_offered():
-    from askstate import Reader, noul
+    from typecastlm import TypecastLM, noul
 
-    r = Reader(MODEL)
+    r = TypecastLM(MODEL)
     v = noul(r, "The ferry leaves at dawn.", "Does the material mention a ferry?",
              true="a ferry is mentioned", false="no ferry is mentioned")[0]
     assert 0.0 <= v.p_yes <= 1.0 and 0.0 <= v.p_unknown <= 1.0
@@ -39,8 +39,8 @@ def test_third_answer_is_read_without_being_offered():
 
 @needs_model
 def test_clashing_answer_words_are_refused():
-    from askstate import Reader, choice
+    from typecastlm import TypecastLM, choice
 
-    r = Reader(MODEL)
+    r = TypecastLM(MODEL)
     with pytest.raises(ValueError):
         choice(r, "any text", "which one?", {"Truth": "one", "Trusty": "other"})
