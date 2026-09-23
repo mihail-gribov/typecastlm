@@ -1,10 +1,12 @@
-askstate
+typecastlm
 Copyright 2026 Mikhail Gribov
 
 This product includes software developed as part of the AI Cordon research line.
 
-The model this package reads is derived from Qwen3-4B (Alibaba Cloud), released under the
-Apache License 2.0. The derivative keeps the first 31 transformer blocks of that model and
-changes nothing else: no weights are retrained, no head is fitted, no calibration is applied.
-Upper blocks are removed, which is why the derivative is smaller than the original and cannot
-generate text.
+The model this package reads is derived from Qwen3.5-4B (Alibaba Cloud), released under the
+Apache License 2.0. The derivative keeps the first 28 transformer blocks of that model unchanged
+and adds a classification head of 29 rows: `true`, `false` and the answer marks are rows of the
+model's own output matrix, copied; `unsure` is a direction computed from 900 labelled rows of
+FEVER (CC BY-SA 3.0). No weight of the original is retrained or edited — there are no gradients in
+the making of it. Upper blocks are removed, which is why the derivative is smaller than the
+original and cannot generate text. Its own NOTICE states this in full.

@@ -13,11 +13,16 @@ carry seven gigabytes of weights and a deep-learning stack.
                false="the material only describes, reports or discusses")
     a.prob, a.unknown
 
+    c.choice(document, "Which rule applies?", {"vacancy": "…", "seepage": "…"}).verdict
+    c.scale(review, "How positive is it?", {"0": "very negative", "1": "negative",
+                                            "2": "neutral", "3": "positive"}).p
+
 Running the model yourself is a separate matter and needs no client: the checkpoint is an ordinary
-three-label classifier, so `transformers` loads it directly — see the model card.
+classifier whose head carries a row per answer and per answer mark, so `transformers` loads it and
+reads all three modes directly — see the model card.
 """
 from .calibrate import calibrate
-from .remote import Answer, Client, Ternary
+from .remote import Answer, Choice, Client, Ternary
 
-__all__ = ["Client", "Answer", "Ternary", "calibrate"]
-__version__ = "0.1.0"
+__all__ = ["Client", "Answer", "Ternary", "Choice", "calibrate"]
+__version__ = "1.0.0"

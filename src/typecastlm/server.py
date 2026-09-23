@@ -4,7 +4,7 @@ This is the half that carries the weights. It is installed on purpose — `pip i
 typecastlm[server]` — because the client must stay light, and the two rarely live on the same
 machine.
 
-    typecastlm-serve --model mihailgribov/typecastlm-qwen3-3.5b --port 8000
+    typecastlm-serve --model mihailgribov/typecastlm-qwen3.5-3.8b --port 8000
 
 The model name is the only thing it needs: the weights come from the Hub on first start and are
 cached, and the prompt comes with them (`prompt.json` beside the weights). That is deliberate —
@@ -25,7 +25,7 @@ import argparse
 import json
 from pathlib import Path
 
-DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3-3.5b"
+DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
 
 
 class Reader:
@@ -47,6 +47,8 @@ class Reader:
         self.model.requires_grad_(False)
         self.device = next(self.model.parameters()).device
         self.labels = [self.model.config.id2label[i] for i in range(self.model.config.num_labels)]
+        self.col = {l: i for i, l in enumerate(self.labels)}
+        self.marks = {l[len("mark_"):]: i for l, i in self.col.items() if l.startswith("mark_")}
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         limit = getattr(self.model.config, "max_position_embeddings", None)
@@ -57,6 +59,10 @@ class Reader:
 
     EXPECTED = ("true", "false", "unsure")
     PROMPT_FIELDS = ("system", "format_two", "means_two", "body", "tail", "max_state_tokens")
+    # Метки вариантов и шкалы живут в той же голове, отдельными строками: `mark_A` … `mark_9`.
+    # Поэтому выбор и шкала читаются тем же одним проходом, что и вердикт, и клиенту не нужно
+    # ничего знать про словарь модели.
+    MARK_PREFIX = "mark_"
 
     def check(self, strict: bool = True) -> list[str]:
         """Is this checkpoint the thing the clients are written against?
@@ -69,11 +75,16 @@ class Reader:
         if not hasattr(self.model, "score"):
             bad.append(f"not a sequence classifier: {type(self.model).__name__} has no `score`")
         n = len(self.labels)
-        if n != 3:
-            bad.append(f"the clients read three outputs, this model has {n}: {self.labels}")
-        elif tuple(l.lower() for l in self.labels) != self.EXPECTED:
-            bad.append(f"labels are {self.labels}, expected {list(self.EXPECTED)} in that order — "
-                       "the order is what carries the meaning")
+        if n < 3:
+            bad.append(f"the clients read at least three outputs, this model has {n}: "
+                       f"{self.labels}")
+        elif tuple(l.lower() for l in self.labels[:3]) != self.EXPECTED:
+            bad.append(f"the first three labels are {self.labels[:3]}, expected "
+                       f"{list(self.EXPECTED)} in that order — the order is what carries the "
+                       "meaning")
+        if not self.marks:
+            bad.append("no `mark_*` outputs: this checkpoint can answer yes or no, but not "
+                       "choice or scale")
         missing = [f for f in self.PROMPT_FIELDS if f not in self.prompt_cfg]
         if missing:
             bad.append(f"prompt.json is missing {missing}")
@@ -133,7 +144,120 @@ class Reader:
             text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         return text + C["tail"]
 
-    KINDS = ("noul", "tfu")
+    KINDS = ("noul", "tfu", "choice", "score")
+    CHOICE_SYSTEM = "You answer with exactly one character from the given list."
+    LETTERS = "ABCDEFGHIJKLMNOP"
+    ORDINAL = "0123456789ABCDEFGHIJKLMNOP"
+
+    def marks_for(self, keys: list[str], ordinal: bool) -> list[str]:
+        """Метки: для шкалы — её собственные цифры, если они однотокенные, иначе общий ряд.
+
+        Цифры несут ПОРЯДОК, и на порядковых задачах это видно по величине промаха, а не по
+        попаданию: ошибаясь, читатель уходит на соседний уровень. Для выбора порядок не нужен, и
+        метками идут буквы.
+        """
+        if ordinal:
+            own = [str(k) for k in keys]
+            if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and x in self.marks
+                                      for x in own):
+                return own
+            row = [c for c in self.ORDINAL if c in self.marks]
+        else:
+            row = [c for c in self.LETTERS if c in self.marks]
+        if len(row) < len(keys):
+            raise ValueError(f"{len(keys)} options, but this checkpoint has {len(row)} usable "
+                             "marks")
+        return row[: len(keys)]
+
+    def build_marks(self, state: str, instructions: str, options: list[tuple[str, str]],
+                    marks: list[str], ordinal: bool) -> str:
+        ids = self.tok.encode(state, add_special_tokens=False)
+        if len(ids) > self.max_state_tokens:
+            half = self.max_state_tokens // 2
+            state = (self.tok.decode(ids[:half], skip_special_tokens=True) + " […] "
+                     + self.tok.decode(ids[-half:], skip_special_tokens=True))
+        ask = ("Answer with the number of the level that rates it." if ordinal
+               and marks[0].isdigit() else "Answer with one letter.")
+        body = (f"<state>\n{state}\n</state>\n\n{instructions}\n\n"
+                + "\n".join(f"{m}. {d}" for m, (_, d) in zip(marks, options))
+                + f"\n\n{ask}")
+        msgs = [{"role": "system", "content": self.CHOICE_SYSTEM},
+                {"role": "user", "content": body}]
+        try:
+            text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                                enable_thinking=False)
+        except TypeError:
+            text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        return text + "Answer: "
+
+    def answer_many(self, state: str, questions: dict) -> tuple[dict, int]:
+        """Пачка вопросов по одному материалу: материал читается ОДИН раз.
+
+        Внимание причинное, а материал в промпте стоит перед вопросом, поэтому его состояние от
+        вопроса не зависит: кеш ключей и значений считается на общем начале однажды, дальше каждый
+        вопрос прогоняется своим хвостом, и кеш откатывается. Это не приближение — числа те же,
+        что при отдельных проходах.
+
+        Граница берётся по САМИМ последовательностям токенов: BPE склеивает символы через стык, и
+        отдельно токенизированный хвост оказывается не тем же, что хвост целой строки.
+        """
+        from transformers import DynamicCache
+
+        built = [(key, self.prepare(state, q)) for key, q in questions.items()]
+        fulls = [self.tok(text, add_special_tokens=False)["input_ids"] for _, (text, _, _) in built]
+        n_min = min(len(f) for f in fulls)
+        n = 0
+        while n < n_min and len({f[n] for f in fulls}) == 1:
+            n += 1
+        if n < 32 or len(fulls) == 1:                 # делить нечего
+            out, tokens = {}, 0
+            for key, q in questions.items():
+                ans, t = self.answer(state, q)
+                out[key], tokens = ans, tokens + t
+            return out, tokens
+
+        cache = DynamicCache()
+        pre = self.torch.tensor([fulls[0][:n]], device=self.device)
+        with self.torch.no_grad():
+            self.model.model(input_ids=pre, attention_mask=self.torch.ones_like(pre),
+                             past_key_values=cache, use_cache=True)
+        out, tokens = {}, n
+        for (key, (_, keys, wanted)), full in zip(built, fulls):
+            ids = self.torch.tensor([full[n:]], device=self.device)
+            pos = self.torch.arange(n, len(full), device=self.device)[None]
+            with self.torch.no_grad():
+                h = self.model.model(input_ids=ids, past_key_values=cache, use_cache=True,
+                                     position_ids=pos,
+                                     attention_mask=self.torch.ones(1, len(full),
+                                                                    device=self.device,
+                                                                    dtype=self.torch.long))
+                z = self.model.score(h.last_hidden_state[0, -1]).float().cpu()
+            cache.crop(n)
+            out[key] = {"kind": q_kind(questions[key]),
+                        "logits": {k: float(z[i]) for k, i in zip(keys, wanted)}}
+            tokens += len(full) - n
+        return out, tokens
+
+    def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int]]:
+        """Текст запроса, имена ответов и номера выходов головы, которые их несут."""
+        kind = q.get("type", "noul")
+        if kind not in self.KINDS:
+            raise ValueError(f"question type {kind!r} is not implemented; this service answers "
+                             f"{self.KINDS}")
+        crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
+        if kind in ("noul", "tfu"):
+            if len(crit) != 2:
+                raise ValueError("a yes/no question takes exactly two criteria; the third answer "
+                                 "is read without being asked for")
+            t, f = list(crit.values())
+            return self.build(state, q["instructions"], t, f), list(self.EXPECTED), [0, 1, 2]
+        if len(crit) < 2:
+            raise ValueError(f"a {kind} question takes at least two options")
+        options = list(crit.items())
+        marks = self.marks_for([k for k, _ in options], ordinal=(kind == "score"))
+        text = self.build_marks(state, q["instructions"], options, marks,
+                                ordinal=(kind == "score"))
+        return text, [k for k, _ in options], [self.marks[m] for m in marks]
 
     def answer(self, state: str, q: dict) -> tuple[dict, int]:
         kind = q.get("type", "noul")
@@ -141,23 +265,36 @@ class Reader:
             raise ValueError(f"question type {kind!r} is not implemented; this service answers "
                              f"{self.KINDS}")
         crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
-        if len(crit) != 2:
-            raise ValueError("a question takes exactly two criteria; the third answer is read "
-                             "without being asked for")
-        t, f = list(crit.values())
-        prompt = self.build(state, q["instructions"], t, f)
+        if kind in ("noul", "tfu"):
+            if len(crit) != 2:
+                raise ValueError("a yes/no question takes exactly two criteria; the third answer "
+                                 "is read without being asked for")
+            t, f = list(crit.values())
+            prompt = self.build(state, q["instructions"], t, f)
+            wanted = list(range(3))
+            keys = list(self.EXPECTED)
+        else:
+            if len(crit) < 2:
+                raise ValueError(f"a {kind} question takes at least two options")
+            options = list(crit.items())
+            marks = self.marks_for([k for k, _ in options], ordinal=(kind == "score"))
+            prompt = self.build_marks(state, q["instructions"], options, marks,
+                                      ordinal=(kind == "score"))
+            wanted = [self.marks[m] for m in marks]
+            keys = [k for k, _ in options]
+
         enc = self.tok([prompt], return_tensors="pt", add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
-            z = self.model(**enc).logits[0].float()
-            p = self.torch.softmax(z, -1).cpu().tolist()
-        # One answer for both question types: the server gives three numbers, and every reading —
-        # `noul` over two, `tfu` over three, any temperature — follows from them on the asking
-        # side. Computing the same thing here as well would be a second place to drift.
-        logits = dict(zip(self.labels, (float(v) for v in z.cpu())))
-        decided = p[0] + p[1]
-        return ({"noul": p[0] / decided if decided > 0 else 0.5,
-                 "unknown": p[2] if len(p) > 2 else 0.0, "logits": logits},
-                int(enc["attention_mask"].sum()))
+            z = self.model(**enc).logits[0].float().cpu()
+        # Сырые логиты, и только те, что относятся к вопросу. Softmax здесь не считается: 29
+        # выходов головы — ответы на разные вопросы, а не варианты одного, и нормировать их разом
+        # бессмысленно. Режим, его температура и вероятности — дело спрашивающего.
+        logits = {k: float(z[i]) for k, i in zip(keys, wanted)}
+        return {"kind": kind, "logits": logits}, int(enc["attention_mask"].sum())
+
+
+def q_kind(q: dict) -> str:
+    return q.get("type", "noul")
 
 
 def _request_model():
@@ -183,7 +320,7 @@ def build_app(reader: Reader):
 
     Ask = _request_model()
     globals()["Ask"] = Ask                     # so the string annotation resolves
-    app = FastAPI(title="typecastlm", version="0.1.0")
+    app = FastAPI(title="typecastlm", version="1.0.0")
 
     @app.get("/health")
     def health() -> dict:
@@ -194,17 +331,16 @@ def build_app(reader: Reader):
 
     @app.post("/v1/typecast")
     def typecast(req: "Ask") -> dict:
-        if len(req.questions) != 1:
-            raise HTTPException(400, "version zero answers one question per call")
-        key, q = next(iter(req.questions.items()))
+        if not req.questions:
+            raise HTTPException(400, "no questions")
         try:
-            ans, tokens = reader.answer(req.state, q)
+            answers, tokens = reader.answer_many(req.state, req.questions)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         # The body is exactly the service's: `answers`, `usage`, `model`. Timing is the client's
         # business — an extra field here would be ours rather than shared.
         # The calibration rides along: it belongs to the checkpoint, and a client should not guess it.
-        return {"answers": {key: ans}, "usage": {"input_tokens": tokens}, "model": reader.name,
+        return {"answers": answers, "usage": {"input_tokens": tokens}, "model": reader.name,
                 "calibration": reader.prompt_cfg.get("calibration", {})}
 
     return app

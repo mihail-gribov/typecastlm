@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "typecastlm"
-version = "0.1.0"
+version = "1.0.0"
 description = "Ask a document a closed question and get probabilities back: yes, no, and nothing-here-decides-it"
 readme = "README.md"
 requires-python = ">=3.10"

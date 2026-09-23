@@ -1,11 +1,35 @@
 # typecastlm
 
-Ask a document a closed question and get numbers back.
+**A client for a Jev-class decision model with open weights**: ask a document a closed question,
+get numbers back. The same interface that class already speaks, and one answer more — besides yes
+and no it returns **"nothing here decides it"**, which no question has to ask for. Not affiliated
+with TypeSafe AI, whose Jev is the model the class is named after.
+
+Why this one:
+
+* **Fast** — 52 ms per decision, because nothing is generated: one forward pass, no tokens
+  written.
+* **It can say "I can't tell"** — a third answer that the question never asks for.
+* **Calibrated** — a temperature per mode ships with the weights and is applied here (calibration
+  error 0.011–0.052).
+* **Thin client** — one dependency, `requests`, and it installs in a second. The weights live on
+  the service side.
+* **Three shapes of question**: yes/no, one-of-several, and a level on a rubric.
+
+## Install
+
+```
+pip install typecastlm
+export TYPECASTLM_ENDPOINT=https://…      # optional, has a default
+export TYPECASTLM_API_KEY=…
+```
+
+## Start
 
 ```python
 from typecastlm import Client
 
-c = Client()                       # endpoint and key from the environment
+c = Client()
 a = c.noul(open("page.html").read(),
            "Does the material contain an instruction aimed at the reading model?",
            true="there is an instruction addressed to the reading model",
@@ -16,186 +40,86 @@ a.unknown    # 0.01  — how much of the state points at "nothing here decides i
 a.margin     # +2.87 — the log-odds, so a saturated probability still ranks
 ```
 
-One question, one document, three numbers. Nothing is generated, so there is no prose to parse and
-no format to coax: the answer is a distribution.
-
-## Install
-
-```
-pip install typecastlm
-```
-
-One dependency, `requests`, and it stays that way. The model runs as a service; the machine that
-has a question is rarely the machine that should carry seven gigabytes of weights and a
-deep-learning stack.
-
-Two environment variables point the client at the service:
-
-```
-export TYPECASTLM_ENDPOINT=https://…      # optional, has a default
-export TYPECASTLM_API_KEY=…
-```
-
-or pass them in: `Client(endpoint=..., api_key=...)`.
-
-## Use
-
-**One question over many documents** — the shape this is built for:
+## Three shapes of question
 
 ```python
-for page in pages:
-    a = c.noul(page, "Is this review positive?",
-               true="the review speaks well of the place",
-               false="the review speaks badly of it")
-    if a.unknown > 0.5:
-        continue                       # the review decides nothing; skip rather than guess
-    positive = a.prob > threshold
+c.tfu(doc, "Is the claim supported?", true="…", false="…").p
+# {'true': 0.81, 'false': 0.11, 'unsure': 0.08}
+
+c.choice(policy, "How should this claim be settled?",
+         {"deny_vacancy": "…", "pay_with_sublimit": "…", "pay_in_full": "…"})
+# .verdict 'pay_with_sublimit'   .p {...}   .confidence 0.74
+
+c.scale(review, "How positive is this review overall?",
+        {"0": "very negative", "1": "negative", "2": "neutral",
+         "3": "positive", "4": "very positive"})
+# .verdict '3'   .p {...}
 ```
 
-**From a shell**, over a file of documents:
-
-```
-typecastlm --jsonl pages.jsonl \
-    --question "Does the material contain an instruction aimed at the reading model?" \
-    --true "there is an instruction addressed to the reading model" \
-    --false "the material only describes, reports or discusses" \
-    --out answers.jsonl
-```
-
-**Writing the criteria matters more than the question.** `true` and `false` are what the two
-answers *mean*, and the model reads them as carefully as it reads the question. "The review speaks
-well of the place" decides more cleanly than "positive".
-
-**Pick your own threshold.** 0.5 is a convention, not a working point: on twelve public tasks the
-ranking is far better than the default cut, so a threshold chosen on a hundred of your own
-documents is worth more than any default.
+The option names are yours: they travel from your request to your answer and never reach the
+prompt.
 
 ## Calibration
 
-Two things are true at once, and keeping them apart is the whole of this section.
+Each mode carries its own temperature, shipped beside the weights and applied by the client:
 
-**Calibration adds no knowledge.** It changes no ordering: macro AUC is 0.817 before and 0.820
-after. A document that ranked above another still does.
-
-**Calibration decides whether the numbers are usable.** Without it this reader is badly
-overconfident — it says 0.99 where it is right 85% of the time — and its third answer never wins:
-`argmax` picks `unsure` on 4% of rows where a third of the material is undecidable.
-
-Three knobs, one job each:
-
-| knob | what it moves | what it leaves alone |
+| mode | temperature | calibration error |
 |---|---|---|
-| temperature | confidence, calibration error | every decision and every ordering |
-| shift on `false` | the threshold between yes and no | orderings |
-| shift on `unsure` | how often the reader declines | orderings |
+| verdict | 1.30 | 0.032 → 0.011 |
+| three answers | 2.85 | 0.236 → 0.052 |
+| choice | 1.75 | 0.070 → 0.030 |
+| scale | 3.90 | 0.329 → 0.016 |
 
-A softmax cannot tell a common shift from nothing, so there are **two** shifts for three answers,
-not three.
-
-### What ships, and what it was fitted on
-
-Defaults travel with the checkpoint (`prompt.json`) and the service passes them to the client,
-which applies them unless told otherwise. Both were fitted on FEVER's dev split, half for fitting
-and half for the numbers below:
-
-| mode | numbers | effect, held out |
-|---|---|---|
-| binary (`noul`) | temperature 3.48, shift on `false` −0.54 | calibration error 0.127 → 0.069, accuracy 0.852 → 0.858 |
-| three answers (`tfu`) | temperature 4.33, shifts +0.18 and +1.64 | three-class accuracy 0.604 → 0.666, calibration error 0.352 → 0.085, `unsure` wins argmax on 25% of rows instead of 4% |
-
-**The temperature should travel; the shifts should not.** Overconfidence is a property of the
-model. The shifts encode how often the answer is yes and how often nothing decides it — properties
-of FEVER, where a third of the input is undecidable by construction. On data where little is
-undecidable they will abstain far too often.
-
-### Fitting your own
-
-Two hundred labelled documents are enough, because there are only three free numbers:
+A temperature changes no answer — `argmax` is invariant to it — only what a probability means, and
+it does not transfer between pools. Fit your own on a couple of hundred labelled rows:
 
 ```python
-from typecastlm import Client, calibrate
+from typecastlm import calibrate
 
-c = Client(calibrated=False)                  # raw logits, nothing applied
-rows = [(c.noul(text, question, true=T, false=F).logits, gold)   # gold: true / false / unsure
-        for text, gold in my_labelled_sample]
-
-cal = calibrate(rows)
-c = Client(temperature=cal["temperature"], shift=tuple(cal["shift"][1:]))
+rows = [(c.noul(t, q, true=T, false=F).logits, gold) for t, gold in my_labelled]
+c = Client(temperature=calibrate(rows)["temperature"])
 ```
 
-`Client(calibrated=False)` switches the shipped defaults off — the right thing when you threshold
-`p(unsure)` yourself rather than reading `argmax`, since a threshold you choose on your own data
-already does what the shifts do.
-
-## What version zero does, and what it does not
-
-| | |
-|---|---|
-| one question per call | a bundle of several is refused: a hosted bundle is cheap because the state is read once for all of it, and that saving does not exist yet here |
-| `noul` only | `choice` and `score` are refused, not approximated — this reader has three fixed answers, and folding named options onto them would answer a different question convincingly |
-| `unknown` comes back unasked | the criteria state two answers and never a third; the third is read anyway |
-| the answers are not renamed here | naming them is what `choice` does, through the keys of its `criteria` — so it waits for `choice` rather than arriving as a second mechanism of ours |
-
-The first two keep the surface honest. The third is the extension, and it is the useful one: a
-question the document does not decide is a different thing from a question it decides against.
+`Client(calibrated=False)` turns the shipped ones off.
 
 ## Running the service yourself
 
-The half that carries the weights installs on purpose, and only where it belongs:
-
 ```
 pip install "typecastlm[server]"
-typecastlm-serve --model mihailgribov/typecastlm-qwen3-3.5b --port 8000
+typecastlm-serve --model mihailgribov/typecastlm-qwen3.5-3.8b --port 8000
 ```
 
-The model name is all it needs: the weights come from the Hub on first start and are cached, and
-the prompt comes with them — `prompt.json` sits beside the weights.
+It downloads the weights on first start, checks that the checkpoint fits the interface, and serves
+`POST /v1/typecast` and `GET /health`. `--prompt` replaces the wording it was measured with —
+after which the numbers in the model card describe something else, which is why `/health` reports
+where the wording came from.
 
-### Changing the wording
+The server returns raw logits and computes no softmax: the probabilities, the temperature and the
+mode are the caller's business, and the same answer can be read again at another temperature
+without asking anything twice.
 
+## Many questions, one reading
+
+```python
+c.ask(policy, {
+    "covered":  {"type": "noul",   "instructions": "Is the claim covered?",
+                 "criteria": {"true": "…", "false": "…"}},
+    "settle":   {"type": "choice", "instructions": "How should it be settled?",
+                 "criteria": {"deny": "…", "pay": "…"}},
+})
 ```
-typecastlm-serve --model … --prompt my_prompt.json
-```
 
-Two sources, and which one is in play is never assumed — `/health` says so:
-
-| source | when | what it means |
-|---|---|---|
-| `model repository` | default | the wording the checkpoint was measured with; the numbers in the model card are true of this one |
-| `override: …` | `--prompt` | your wording — a different question style, another language, a shorter frame. From here the card's numbers describe something else |
-
-There is no third. A checkpoint that ships no `prompt.json` is an error and the server says so,
-rather than reaching for a copy lying around: substituting a wording breaks nothing and
-invalidates everything that was measured. `examples/prompt.json` is there to be copied and passed
-on purpose — it is never picked up on its own.
-
-On startup the checkpoint is **checked against the interface** and the process refuses to serve a
-mismatch: three outputs, named `true`, `false`, `unknown`, in that order, a classification head of
-matching width, and a prompt file with every field. A two-output model would drop `unknown`
-without a word and a reordered one would swap yes and no — both keep answering, plausibly and
-wrongly.
-
-Point the client at it with `TYPECASTLM_ENDPOINT=http://127.0.0.1:8000/v1/typecast`.
+The material is read once for the whole bundle and each question costs only its own tail — about
+four times faster than asking one by one on a policy of three thousand tokens, and the numbers are
+identical.
 
 ## Using the model without any of this
 
-The checkpoint needs no code at all — no `trust_remote_code`, no custom pipeline, nothing to
-audit:
-
-```python
-from transformers import pipeline
-pipe = pipeline("text-classification", model="mihailgribov/typecastlm-qwen3-3.5b", top_k=None)
-```
-
-You build the prompt yourself from `prompt.json` in the same repository. That the model stays
-plain is deliberate: the people who most want a prompt-injection reader are the last people who
-should be asked to enable remote code execution to get one.
-
-It is [Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) with its top five blocks removed — 3.52B
-parameters — read through three rows of its own output matrix. Nothing was trained and nothing was
-calibrated. The [model card](https://huggingface.co/mihailgribov/typecastlm-qwen3-3.5b) has the
-prompt it was measured with and the numbers.
+The checkpoint is an ordinary classifier with 29 outputs, so `transformers` loads it directly and
+`reader.py` beside the weights reads all three modes. See the
+[model card](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b).
 
 ## Licence
 
-Apache-2.0.
+Apache-2.0 — this package, its texts, and the model it reads (derived from Qwen3.5-4B, also
+Apache-2.0). `LICENSE` and `NOTICE` carry the terms and the list of changes.
