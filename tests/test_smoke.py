@@ -30,3 +30,21 @@ def test_version_zero_takes_one_question():
     with pytest.raises(NotImplementedError):
         c.ask("state", {"a": {"type": "noul", "instructions": "?"},
                         "b": {"type": "noul", "instructions": "?"}})
+
+
+def test_the_shape_check_is_written_down():
+    """The server must refuse a checkpoint that does not have the three outputs the clients read.
+
+    Kept here, without weights, so the rule itself is covered even where torch is absent.
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src/typecastlm/server.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    reader = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.ClassDef) and n.name == "Reader")
+    assert any(isinstance(n, ast.FunctionDef) and n.name == "check" for n in reader.body)
+    expected = next(n for n in reader.body
+                    if isinstance(n, ast.Assign) and n.targets[0].id == "EXPECTED")
+    assert [c.value for c in expected.value.elts] == ["true", "false", "unknown"]

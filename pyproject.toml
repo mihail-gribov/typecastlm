@@ -26,10 +26,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "build>=1.0", "twine>=5.0"]
+# Всё тяжёлое — здесь и только здесь: сервер держит веса, клиент о них не знает.
+server = [
+    "torch>=2.2",
+    "transformers>=4.51",
+    "huggingface-hub>=0.24",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+dev = ["pytest>=8"]
 
 [project.scripts]
 typecastlm = "typecastlm.cli:main"
+typecastlm-serve = "typecastlm.server:main"
 
 [project.urls]
 Homepage = "https://huggingface.co/mihailgribov/qwen3-layer30-reader"

@@ -81,14 +81,40 @@ documents is worth more than any default.
 The first two keep the surface honest. The third is the extension, and it is the useful one: a
 question the document does not decide is a different thing from a question it decides against.
 
-## Running the model yourself
+## Running the service yourself
 
-You do not need this package for that. The checkpoint is an ordinary three-label classifier:
+The half that carries the weights installs on purpose, and only where it belongs:
+
+```
+pip install "typecastlm[server]"
+typecastlm-serve --model mihailgribov/typecastlm-qwen3-3.5b --port 8000
+```
+
+The model name is all it needs: the weights come from the Hub on first start and are cached, and
+the prompt comes with them — `prompt.json` sits beside the weights, because the wording and the
+weights were measured together and a second copy would drift.
+
+On startup the checkpoint is **checked against the interface** and the process refuses to serve a
+mismatch: three outputs, named `true`, `false`, `unknown`, in that order, a classification head of
+matching width, and a prompt file with every field. A two-output model would drop `unknown`
+without a word and a reordered one would swap yes and no — both keep answering, plausibly and
+wrongly.
+
+Point the client at it with `TYPECASTLM_ENDPOINT=http://127.0.0.1:8000/v1/typecast`.
+
+## Using the model without any of this
+
+The checkpoint needs no code at all — no `trust_remote_code`, no custom pipeline, nothing to
+audit:
 
 ```python
 from transformers import pipeline
 pipe = pipeline("text-classification", model="mihailgribov/typecastlm-qwen3-3.5b", top_k=None)
 ```
+
+You build the prompt yourself from `prompt.json` in the same repository. That the model stays
+plain is deliberate: the people who most want a prompt-injection reader are the last people who
+should be asked to enable remote code execution to get one.
 
 It is [Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) with its top five blocks removed — 3.52B
 parameters — read through three rows of its own output matrix. Nothing was trained and nothing was
