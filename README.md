@@ -14,18 +14,7 @@ a = c.noul(open("page.html").read(),
 a.prob       # 0.95  — probability of `true` among the two answers that decide the question
 a.unknown    # 0.01  — how much of the state points at "nothing here decides it"
 a.margin     # +2.87 — the log-odds, so a saturated probability still ranks
-a.p          # {'true': 0.94, 'false': 0.05, 'unknown': 0.01} — all three, if you want them
 ```
-
-The three can carry your own names, which is a rename and nothing more:
-
-```python
-c = Client(labels=("positive", "negative", "undecidable"))
-```
-
-Which row means what is fixed by the checkpoint and verified by the service, so there is no way to
-reorder them from here — that is the one substitution that would keep answering and stop being
-true.
 
 One question, one document, three numbers. Nothing is generated, so there is no prose to parse and
 no format to coax: the answer is a distribution.
@@ -88,7 +77,7 @@ documents is worth more than any default.
 | one question per call | a bundle of several is refused: a hosted bundle is cheap because the state is read once for all of it, and that saving does not exist yet here |
 | `noul` only | `choice` and `score` are refused, not approximated — this reader has three fixed answers, and folding named options onto them would answer a different question convincingly |
 | `unknown` comes back unasked | the criteria state two answers and never a third; the third is read anyway |
-| outputs can be renamed, not reordered | `Client(labels=("positive", "negative", "undecidable"))` renames them on the way out; which row means what is fixed by the checkpoint and checked by the service |
+| the answers are not renamed here | naming them is what `choice` does, through the keys of its `criteria` — so it waits for `choice` rather than arriving as a second mechanism of ours |
 
 The first two keep the surface honest. The third is the extension, and it is the useful one: a
 question the document does not decide is a different thing from a question it decides against.

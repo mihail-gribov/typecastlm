@@ -11,6 +11,11 @@ The interface is compatible with the hosted decision service and wider by one nu
     unknown how much of the state points at "nothing here decides it" — never asked for, always
             returned
 
+Naming the answers is not a knob here, because it is not one over there either: in `choice` the
+keys of `criteria` ARE the names, and they come back as the keys of `probabilities`. When `choice`
+arrives it will name them that way; until then there is nothing to rename, and a second mechanism
+for it would have been ours alone.
+
 **Version zero answers one `noul` question per call.** `choice` and `score` are refused rather than
 approximated, and a bundle of several questions is refused too: over there a bundle is cheap
 because the state is read once for all of it, and here each question reads it again.
@@ -33,9 +38,8 @@ RETRY_CODES = (408, 429, 500, 502, 503, 504, 529)
 class Answer:
     """What `noul` returns.
 
-    `prob`, `margin`, `ms`, `input_tokens` and `model` are the service's fields. `unknown` and
-    `p` are the extensions: the weight of "nothing here decides it", and the three probabilities
-    under whatever names the caller asked for.
+    `prob`, `margin`, `ms`, `input_tokens` and `model` are the service's fields. `unknown` is the
+    single extension: the weight of "nothing here decides it", which the criteria never ask for.
     """
 
     prob: float
@@ -44,7 +48,6 @@ class Answer:
     input_tokens: int
     model: str
     unknown: float = 0.0
-    p: dict[str, float] | None = None
 
 
 class Client:
@@ -57,13 +60,7 @@ class Client:
 
     def __init__(self, endpoint: str | None = None, api_key: str | None = None,
                  model: str = "typecastlm-qwen3-3.5b", timeout: float = 10.0, retries: int = 5,
-                 pool: int = 32, labels: tuple[str, str, str] | None = None):
-        """`labels` renames the three outputs on the way out — and only that.
-
-        Which row means what is fixed by the checkpoint and checked by the service; a name is for
-        whoever reads the answer. Renaming is safe, reordering is not, so there is no way to ask
-        for the second one here.
-        """
+                 pool: int = 32):
         import requests
         from requests.adapters import HTTPAdapter
 
@@ -73,9 +70,6 @@ class Client:
         self._s = requests.Session()
         self._s.mount("https://", HTTPAdapter(pool_connections=pool, pool_maxsize=pool))
         self._requests = requests
-        if labels is not None and len(labels) != 3:
-            raise ValueError(f"three outputs, three names; got {len(labels)}")
-        self.labels = tuple(labels) if labels else None
 
     def _post(self, body: dict) -> tuple[dict, float]:
         delay = 1.0
@@ -116,10 +110,7 @@ class Client:
         a = data["answers"]["q"]
         p = float(a["noul"])
         pc = min(max(p, 1e-6), 1 - 1e-6)
-        probs = a.get("probabilities")
-        if probs and self.labels:
-            probs = dict(zip(self.labels, probs.values()))     # переименование, порядок тот же
         return Answer(prob=p, margin=math.log(pc / (1 - pc)), ms=ms,
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
                       model=str(data.get("model", self.model)),
-                      unknown=float(a.get("unknown", 0.0)), p=probs)
+                      unknown=float(a.get("unknown", 0.0)))

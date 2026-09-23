@@ -145,11 +145,10 @@ class Reader:
         with self.torch.no_grad():
             p = self.torch.softmax(self.model(**enc).logits[0].float(), -1).cpu().tolist()
         decided = p[0] + p[1]
-        # `noul` и `unknown` — договорные поля; `probabilities` отдаются сверх них, чтобы
-        # спрашивающий мог назвать выходы по-своему, не пересчитывая ничего сам.
+        # Только договорное поле и одно расширение: словарь вероятностей — это `choice`, а он
+        # ещё не реализован, и заводить его половину под видом `noul` не стоит.
         return ({"noul": p[0] / decided if decided > 0 else 0.5,
-                 "unknown": p[2] if len(p) > 2 else 0.0,
-                 "probabilities": dict(zip(self.labels, p))},
+                 "unknown": p[2] if len(p) > 2 else 0.0},
                 int(enc["attention_mask"].sum()))
 
 

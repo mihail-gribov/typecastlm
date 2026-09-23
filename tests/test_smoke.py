@@ -48,12 +48,3 @@ def test_the_shape_check_is_written_down():
     expected = next(n for n in reader.body
                     if isinstance(n, ast.Assign) and n.targets[0].id == "EXPECTED")
     assert [c.value for c in expected.value.elts] == ["true", "false", "unknown"]
-
-
-def test_names_can_change_but_not_their_number():
-    from typecastlm import Client
-
-    c = Client(endpoint="http://127.0.0.1:1/never", labels=("yes", "no", "undecidable"))
-    assert c.labels == ("yes", "no", "undecidable")
-    with pytest.raises(ValueError):
-        Client(endpoint="http://127.0.0.1:1/never", labels=("yes", "no"))
