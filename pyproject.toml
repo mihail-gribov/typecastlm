@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "askstate"
+version = "0.1.0"
+description = "Ask a document a closed question and get probabilities back: a truncated Qwen trunk read through its own head"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Mikhail Gribov", email = "mihail.gribov.rs@gmail.com" }]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+keywords = ["classifier", "zero-shot", "yes-no", "calibration", "prompt-injection", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.51",
+    "huggingface-hub>=0.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+askstate = "askstate.cli:main"
+
+[project.urls]
+Homepage = "https://huggingface.co/mihailgribov/qwen3-layer30-reader"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/askstate"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
