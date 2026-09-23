@@ -33,34 +33,34 @@ options can be named per call — `choice` does exactly that.
 `False`: the row exists regardless of what the model was invited to say, and its logit reports how
 much of the state points at "nothing here decides it".
 
-## One profile per base model
+## The package carries no weights and no head
 
-Everything that is not in the weights lives in a profile: where the trunk is cut, which words the
-answers are, how the prompt is assembled, where the weights are downloaded from — and **the head
-itself**, three vectors of 2560 numbers, thirty kilobytes.
-
-```
-src/typecastlm/profiles/
-    qwen3-4b.json                 the description
-    qwen3-4b-head.safetensors     the three rows that do the reading
-```
-
-The head travels as data for a reason. It is a slice of the base model's output matrix, and
-re-deriving it from the tokenizer on every load makes the reading depend on how a surface happens
-to be split: a silent shift there would read the wrong rows and still return plausible numbers. The
-carried copy is checked against the weights on load, and a mismatch is an error, not a warning.
-
-A packed checkpoint ships the same file beside its weights, and that copy wins — weights and the
-way they are read belong together. A bundled profile is the fallback, which is what makes this
-work:
+The model carries everything of its own: it is an ordinary `Qwen3ForSequenceClassification` whose
+`score` matrix is three rows of the base model's output matrix, and `prompt.json` beside it holds
+the wording it was measured with. So this package is a wrapper — a prompt, a forward pass, a
+softmax — and nothing here can drift away from the checkpoint it describes.
 
 ```python
-TypecastLM("Qwen/Qwen3-4B")     # full base model, truncated in memory at the profile's layer
+from transformers import pipeline
+pipeline("text-classification", model="mihailgribov/typecastlm-qwen3-4b", top_k=None)
 ```
 
-Adding a base model means writing a profile and **measuring it**: the `measured` block is not
-decoration, because nobody knows in advance whether another tokenizer's answer words carry the
-verdict at the layer the profile cuts at.
+works without this package at all. What the package adds is the decision-shaped surface, the
+criteria wording, and the batching.
+
+## Running it somewhere else
+
+Seven gigabytes and a deep-learning stack do not belong on every machine that has a question, so
+the package installs light and the heavy part is opt-in:
+
+```
+pip install typecastlm            # RemoteClient only: requests, nothing else
+pip install typecastlm[local]     # torch, transformers — runs the model here
+```
+
+`Client` and `RemoteClient` answer the same calls with the same fields, which is the point: the
+same code runs against local weights while it is being written and against a service in
+production.
 
 ## Install
 

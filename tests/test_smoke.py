@@ -9,38 +9,45 @@ MODEL = os.environ.get("TYPECASTLM_MODEL")
 needs_model = pytest.mark.skipif(not MODEL, reason="set TYPECASTLM_MODEL to a model directory")
 
 
-def test_imports():
+def test_import_is_light():
+    """Importing the package must not pull in a deep-learning stack: the remote client runs
+    on machines that have none."""
+    import sys
+
+    sys.modules.pop("torch", None)
     import typecastlm
 
-    assert {"TypecastLM", "noul", "choice", "score"} <= set(typecastlm.__all__)
+    assert {"Client", "RemoteClient"} <= set(typecastlm.__all__)
+    assert "torch" not in sys.modules
 
 
 @needs_model
-def test_prompt_shows_words_in_order():
-    from typecastlm import TypecastLM
+def test_labels_come_from_the_model():
+    from typecastlm import Client
 
-    r = TypecastLM(MODEL)
-    p = r.prompt("a document", "is it so?", {"True": "it is so", "False": "it is not"})
-    assert "either True or False" in p
-    assert p.index("True means:") < p.index("False means:")
-    assert p.rstrip().endswith("Answer:")
+    c = Client(MODEL)
+    assert len(c.reader.labels) == 3
 
 
 @needs_model
-def test_third_answer_is_read_without_being_offered():
-    from typecastlm import TypecastLM, noul
+def test_noul_returns_a_probability_and_its_log_odds():
+    import math
 
-    r = TypecastLM(MODEL)
-    v = noul(r, "The ferry leaves at dawn.", "Does the material mention a ferry?",
-             true="a ferry is mentioned", false="no ferry is mentioned")[0]
-    assert 0.0 <= v.p_yes <= 1.0 and 0.0 <= v.p_unknown <= 1.0
-    assert "Unknown" in v.raw.p                      # read although never shown
+    from typecastlm import Client
+
+    c = Client(MODEL)
+    a = c.noul("The ferry leaves at dawn.", "Does the material mention a ferry?",
+               true="a ferry is mentioned", false="no ferry is mentioned")
+    assert 0.0 <= a.prob <= 1.0
+    assert math.isfinite(a.margin)
+    assert a.input_tokens > 0
 
 
 @needs_model
-def test_clashing_answer_words_are_refused():
-    from typecastlm import TypecastLM, choice
+def test_a_longer_option_list_is_refused():
+    from typecastlm import Client
 
-    r = TypecastLM(MODEL)
+    c = Client(MODEL)
     with pytest.raises(ValueError):
-        choice(r, "any text", "which one?", {"Truth": "one", "Trusty": "other"})
+        c.ask("any text", {"q": {"type": "choice", "instructions": "which one?",
+                                 "criteria": {"a": "1", "b": "2", "c": "3", "d": "4"}}})

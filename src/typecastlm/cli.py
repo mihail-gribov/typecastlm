@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=None, help="write JSON lines here instead of stdout")
     a = ap.parse_args(argv)
 
-    from .api import noul
+    from .client import Client
     from .model import DEFAULT_MODEL, TypecastLM
 
     rows: list[dict] = []
@@ -43,15 +43,14 @@ def main(argv: list[str] | None = None) -> int:
     if not rows:
         ap.error("nothing to read: pass --state or --jsonl")
 
-    r = TypecastLM(a.model or DEFAULT_MODEL)
-    out = noul(r, [x[a.field] for x in rows], a.question, a.true, a.false,
-               batch_size=a.batch_size)
+    c = Client(a.model or DEFAULT_MODEL)
+    out = c.batch([x[a.field] for x in rows], a.question, true=a.true, false=a.false,
+                  batch_size=a.batch_size)
     sink = Path(a.out).open("w", encoding="utf-8") if a.out else sys.stdout
     try:
         for row, v in zip(rows, out):
-            sink.write(json.dumps({"id": row["id"], "p_yes": round(v.p_yes, 4),
-                                   "p_unknown": round(v.p_unknown, 4),
-                                   "confidence": round(v.confidence, 4)},
+            sink.write(json.dumps({"id": row["id"], "prob": round(v.prob, 4),
+                                   "margin": round(v.margin, 3)},
                                   ensure_ascii=False) + "\n")
     finally:
         if a.out:

@@ -19,13 +19,19 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# Лёгкий по умолчанию: клиент к сервису не должен тащить стек глубокого обучения на машину,
+# которой считать нечего. Локальный прогон — это `typecastlm[local]`.
 dependencies = [
-    "torch>=2.2",
-    "transformers>=4.51",
-    "huggingface-hub>=0.24",
+    "requests>=2.28",
 ]
 
 [project.optional-dependencies]
+local = [
+    "torch>=2.2",
+    "transformers>=4.51",
+    "huggingface-hub>=0.24",
+    "safetensors>=0.4",
+]
 dev = ["pytest>=8"]
 
 [project.scripts]
