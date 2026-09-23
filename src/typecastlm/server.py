@@ -86,14 +86,16 @@ class Reader:
     def _prompt(model: str, override: str | Path | None) -> tuple[dict, str]:
         """Which wording to use, and where it came from.
 
-        Three sources, and which one is in play has to stay visible. The measured wording ships
+        Two sources, and which one is in play has to stay visible. The measured wording ships
         beside the weights: the numbers in the model card are true of THAT wording and of no
         other. An override replaces it on purpose — a different question style, another language
         — and from then on the card's numbers describe something else, which is why the source is
         reported in `/health` rather than quietly assumed.
 
-        The copy inside this package is the last resort, for a checkpoint that predates the file
-        or a machine that cannot reach the Hub. It may not match those weights at all.
+        There is no third. A checkpoint without the file is an error, not an occasion to reach for
+        a copy lying around: substituting a wording is exactly the kind of change that breaks
+        nothing and invalidates everything measured. `examples/prompt.json` is there to be copied
+        and passed on purpose, never picked up on its own.
         """
         if override:
             return json.loads(Path(override).read_text(encoding="utf-8")), f"override: {override}"
@@ -106,11 +108,10 @@ class Reader:
             path = Path(hf_hub_download(model, "prompt.json"))
             return json.loads(path.read_text(encoding="utf-8")), "model repository"
         except Exception as e:
-            fb = Path(__file__).resolve().parent / "prompt_fallback.json"
-            print(f"typecastlm: no prompt.json with the weights ({type(e).__name__}); "
-                  f"falling back to the copy in the package — the measured numbers may not apply",
-                  flush=True)
-            return json.loads(fb.read_text(encoding="utf-8")), "package fallback"
+            raise FileNotFoundError(
+                f"{model} ships no prompt.json ({type(e).__name__}), and there is no default to "
+                f"fall back on: the wording is part of what was measured. Pass one with "
+                f"--prompt (see examples/prompt.json in the typecastlm repository)") from e
 
     def build(self, state: str, instructions: str, true: str, false: str) -> str:
         C = self.prompt_cfg

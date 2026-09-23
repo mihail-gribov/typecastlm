@@ -99,17 +99,17 @@ the prompt comes with them — `prompt.json` sits beside the weights.
 typecastlm-serve --model … --prompt my_prompt.json
 ```
 
-Three sources, and which one is in play is never assumed — `/health` says so:
+Two sources, and which one is in play is never assumed — `/health` says so:
 
 | source | when | what it means |
 |---|---|---|
 | `model repository` | default | the wording the checkpoint was measured with; the numbers in the model card are true of this one |
 | `override: …` | `--prompt` | your wording — a different question style, another language, a shorter frame. From here the card's numbers describe something else |
-| `package fallback` | no `prompt.json` with the weights, or no network | the copy shipped here, which may not match those weights at all; the server says so on startup |
 
-The default lives with the weights rather than in this package on purpose. A copy here would be a
-second source of truth, and when the two drifted nothing would break — the service would keep
-answering, and the measured table would quietly stop describing it.
+There is no third. A checkpoint that ships no `prompt.json` is an error and the server says so,
+rather than reaching for a copy lying around: substituting a wording breaks nothing and
+invalidates everything that was measured. `examples/prompt.json` is there to be copied and passed
+on purpose — it is never picked up on its own.
 
 On startup the checkpoint is **checked against the interface** and the process refuses to serve a
 mismatch: three outputs, named `true`, `false`, `unknown`, in that order, a classification head of
