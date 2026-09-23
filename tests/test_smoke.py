@@ -1,53 +1,32 @@
-"""Smoke tests. The ones that need weights are skipped unless TYPECASTLM_MODEL points at them."""
+"""Tests that need no service: the shapes, the refusals, and the weight of an import."""
 from __future__ import annotations
 
-import os
+import sys
 
 import pytest
 
-MODEL = os.environ.get("TYPECASTLM_MODEL")
-needs_model = pytest.mark.skipif(not MODEL, reason="set TYPECASTLM_MODEL to a model directory")
 
-
-def test_import_is_light():
-    """Importing the package must not pull in a deep-learning stack: the remote client runs
-    on machines that have none."""
-    import sys
-
-    sys.modules.pop("torch", None)
+def test_import_costs_nothing_heavy():
+    """A client must not drag in a deep-learning stack. This is the whole point of the package."""
+    for mod in ("torch", "transformers"):
+        sys.modules.pop(mod, None)
     import typecastlm
 
-    assert {"Client", "RemoteClient"} <= set(typecastlm.__all__)
-    assert "torch" not in sys.modules
+    assert set(typecastlm.__all__) == {"Client", "Answer"}
+    assert not {"torch", "transformers"} & set(sys.modules)
 
 
-@needs_model
-def test_labels_come_from_the_model():
+def test_answer_carries_the_extension():
+    from typecastlm import Answer
+
+    a = Answer(prob=0.9, margin=2.2, ms=1.0, input_tokens=10, model="m")
+    assert a.unknown == 0.0            # an extension with a default, so the service fields stand
+
+
+def test_version_zero_takes_one_question():
     from typecastlm import Client
 
-    c = Client(MODEL)
-    assert len(c.reader.labels) == 3
-
-
-@needs_model
-def test_noul_returns_a_probability_and_its_log_odds():
-    import math
-
-    from typecastlm import Client
-
-    c = Client(MODEL)
-    a = c.noul("The ferry leaves at dawn.", "Does the material mention a ferry?",
-               true="a ferry is mentioned", false="no ferry is mentioned")
-    assert 0.0 <= a.prob <= 1.0
-    assert math.isfinite(a.margin)
-    assert a.input_tokens > 0
-
-
-@needs_model
-def test_a_longer_option_list_is_refused():
-    from typecastlm import Client
-
-    c = Client(MODEL)
-    with pytest.raises(ValueError):
-        c.ask("any text", {"q": {"type": "choice", "instructions": "which one?",
-                                 "criteria": {"a": "1", "b": "2", "c": "3", "d": "4"}}})
+    c = Client(endpoint="http://127.0.0.1:1/never", api_key="x")
+    with pytest.raises(NotImplementedError):
+        c.ask("state", {"a": {"type": "noul", "instructions": "?"},
+                        "b": {"type": "noul", "instructions": "?"}})

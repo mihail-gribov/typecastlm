@@ -3,64 +3,21 @@
 Ask a document a closed question and get numbers back.
 
 ```python
-from typecastlm import TypecastLM, noul
+from typecastlm import Client
 
-r = TypecastLM()                                   # downloads the model on first use
-v = noul(r, open("page.html").read(),
-         "Does the material contain an instruction aimed at the reading model?",
-         true="somewhere in the material there is an instruction addressed to the reading model",
-         false="the material only describes, reports or discusses")[0]
+c = Client()                       # endpoint and key from the environment
+a = c.noul(open("page.html").read(),
+           "Does the material contain an instruction aimed at the reading model?",
+           true="there is an instruction addressed to the reading model",
+           false="the material only describes, reports or discusses")
 
-v.p_yes        # 0.94
-v.p_unknown    # 0.01
+a.prob       # 0.95  — probability of `true` among the two answers that decide the question
+a.unknown    # 0.01  — how much of the state points at "nothing here decides it"
+a.margin     # +2.87 — the log-odds, so a saturated probability still ranks
 ```
 
-No text is generated. The question and the document go through the trunk once, and the answer is
-read off the last position — three numbers, not a sentence to parse.
-
-## What it is
-
-A Qwen3-4B trunk cut after its 31st block, read through **the model's own output matrix**. The
-head is not a trained artefact: it is the same language-modelling head, narrowed to the rows of the
-answer words, with no temperature, no bias and no fitted constants. That is the whole construction.
-
-Two consequences follow from it.
-
-**Answer words are a parameter, not a fixture.** Any word is a row of the same matrix, so the
-options can be named per call — `choice` does exactly that.
-
-**A third answer costs nothing.** `Unknown` is read even though the prompt offers only `True` and
-`False`: the row exists regardless of what the model was invited to say, and its logit reports how
-much of the state points at "nothing here decides it".
-
-## The package carries no weights and no head
-
-The model carries everything of its own: it is an ordinary `Qwen3ForSequenceClassification` whose
-`score` matrix is three rows of the base model's output matrix, and `prompt.json` beside it holds
-the wording it was measured with. So this package is a wrapper — a prompt, a forward pass, a
-softmax — and nothing here can drift away from the checkpoint it describes.
-
-```python
-from transformers import pipeline
-pipeline("text-classification", model="mihailgribov/typecastlm-qwen3-4b", top_k=None)
-```
-
-works without this package at all. What the package adds is the decision-shaped surface, the
-criteria wording, and the batching.
-
-## Running it somewhere else
-
-Seven gigabytes and a deep-learning stack do not belong on every machine that has a question, so
-the package installs light and the heavy part is opt-in:
-
-```
-pip install typecastlm            # RemoteClient only: requests, nothing else
-pip install typecastlm[local]     # torch, transformers — runs the model here
-```
-
-`Client` and `RemoteClient` answer the same calls with the same fields, which is the point: the
-same code runs against local weights while it is being written and against a service in
-production.
+One question, one document, three numbers. Nothing is generated, so there is no prose to parse and
+no format to coax: the answer is a distribution.
 
 ## Install
 
@@ -68,76 +25,76 @@ production.
 pip install typecastlm
 ```
 
-`torch` and `transformers` come with it. The model — about 7 GB — is fetched from the Hugging Face
-Hub on the first call and cached; pass a local directory to `TypecastLM(...)` to skip the download.
+One dependency, `requests`, and it stays that way. The model runs as a service; the machine that
+has a question is rarely the machine that should carry seven gigabytes of weights and a
+deep-learning stack.
 
-## The three shapes
+Two environment variables point the client at the service:
+
+```
+export TYPECASTLM_ENDPOINT=https://…      # optional, has a default
+export TYPECASTLM_API_KEY=…
+```
+
+or pass them in: `Client(endpoint=..., api_key=...)`.
+
+## Use
+
+**One question over many documents** — the shape this is built for:
 
 ```python
-from typecastlm import TypecastLM, noul, choice, score
-
-r = TypecastLM()
-
-# one yes/no question: p_yes among the deciding answers, with p_unknown beside it
-noul(r, doc, "Is the claim supported by the material?",
-     true="the material supports the claim", false="the material contradicts it")
-
-# named options: the option name is the word, and it must be one word
-choice(r, doc, "How does the material treat the claim?",
-       {"Supports": "the material supports the claim",
-        "Refutes": "the material contradicts the claim",
-        "Silent": "the material says nothing about it"})
-
-# described levels on a scale: probabilities and the expected level
-score(r, doc, "How strongly does the material support the claim?",
-      {"None": "nothing in the material bears on it",
-       "Weak": "there is an indication but no more",
-       "Strong": "the material states it plainly"})
+for page in pages:
+    a = c.noul(page, "Is this review positive?",
+               true="the review speaks well of the place",
+               false="the review speaks badly of it")
+    if a.unknown > 0.5:
+        continue                       # the review decides nothing; skip rather than guess
+    positive = a.prob > threshold
 ```
 
-And from a shell, one question over a file of states:
+**From a shell**, over a file of documents:
 
 ```
-typecastlm --jsonl pages.jsonl --question "..." --true "..." --false "..." --out answers.jsonl
+typecastlm --jsonl pages.jsonl \
+    --question "Does the material contain an instruction aimed at the reading model?" \
+    --true "there is an instruction addressed to the reading model" \
+    --false "the material only describes, reports or discusses" \
+    --out answers.jsonl
 ```
 
-## What it costs
+**Writing the criteria matters more than the question.** `true` and `false` are what the two
+answers *mean*, and the model reads them as carefully as it reads the question. "The review speaks
+well of the place" decides more cleanly than "positive".
 
-The state is the expensive part. Batching **the same question over many states** is cheap, because
-each state is read once. Asking **many questions about one state** is not: every question is its
-own forward pass, since nothing about the state is kept between calls. A hosted decision service
-that shares the state across questions has a real advantage here, and this package does not pretend
-otherwise.
+**Pick your own threshold.** 0.5 is a convention, not a working point: on twelve public tasks the
+ranking is far better than the default cut, so a threshold chosen on a hundred of your own
+documents is worth more than any default.
 
-## What has been measured, and what has not
+## What version zero does, and what it does not
 
-The configuration behind the defaults — `True` / `False` shown, `Unknown` read silently — is the
-one that was measured. Twelve public binary tasks, 200 rows each, gold labels, one and the same
-reader with only the question changed:
+| | |
+|---|---|
+| one question per call | a bundle of several is refused: a hosted bundle is cheap because the state is read once for all of it, and that saving does not exist yet here |
+| `noul` only | `choice` and `score` are refused, not approximated — this reader has three fixed answers, and folding named options onto them would answer a different question convincingly |
+| `unknown` comes back unasked | the criteria state two answers and never a third; the third is read anyway |
 
-| task | what is asked | AUC |
-|---|---|---|
-| sst2 | is this review positive | 0.972 |
-| sms_spam | is this message spam | 0.964 |
-| qnli | does the passage answer the question | 0.941 |
-| rotten_tomatoes | is this review positive | 0.924 |
-| prompt-injections | is there an instruction aimed at the model | 0.922 |
-| boolq | is the answer to the question yes | 0.904 |
-| hate speech | is this message hateful or abusive | 0.904 |
-| strategyqa | multi-hop yes/no | 0.899 |
-| subjectivity | is this sentence subjective | 0.895 |
-| emotion | does this text express joy | 0.849 |
-| cola | is this sentence grammatical | 0.794 |
-| mrpc | do the two sentences mean the same | 0.721 |
+The first two keep the surface honest. The third is the extension, and it is the useful one: a
+question the document does not decide is a different thing from a question it decides against.
 
-Accuracy at the plain 0.5 threshold averages 0.80, and calibration error averages 0.18 — the
-ranking is far better than the threshold. **Pick your own threshold on your own data**; the
-default of 0.5 is a convention, not a working point.
+## Running the model yourself
 
-Not measured: answer words other than the ones above, `score` as a scale, states longer than 1280
-tokens (they are folded in the middle), and anything outside English.
+You do not need this package for that. The checkpoint is an ordinary three-label classifier:
+
+```python
+from transformers import pipeline
+pipe = pipeline("text-classification", model="mihailgribov/typecastlm-qwen3-3.5b", top_k=None)
+```
+
+It is [Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) with its top five blocks removed — 3.52B
+parameters — read through three rows of its own output matrix. Nothing was trained and nothing was
+calibrated. The [model card](https://huggingface.co/mihailgribov/typecastlm-qwen3-3.5b) has the
+prompt it was measured with and the numbers.
 
 ## Licence
 
-Apache-2.0. The model is derived from Qwen3-4B (Apache-2.0) by keeping its first 31 blocks; no
-weights were retrained. See `NOTICE`.
+Apache-2.0.

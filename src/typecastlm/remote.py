@@ -1,11 +1,22 @@
-"""The same surface over HTTP, for machines that should not carry a model.
+"""The client: a question over HTTP, an answer in numbers.
 
-`Client` loads seven gigabytes and needs torch. On a laptop, in a browser backend, inside a lambda
-— none of that belongs there, and the question is not big enough to justify it. `RemoteClient`
-answers the same calls by asking a service, and depends on nothing but `requests`.
+Deliberately the only thing here. Running the model means seven gigabytes of weights and a
+deep-learning stack, and the machine that has a question is rarely the machine that should carry
+them — a laptop, a request handler, a lambda. So the package depends on `requests` and stops
+there.
 
-The two are interchangeable on purpose: the same code runs against local weights while it is being
-developed and against a service in production, and the answers have the same fields either way.
+The interface is compatible with the hosted decision service and wider by one number:
+
+    noul    the probability of the `true` criterion among the two that decide the question
+    unknown how much of the state points at "nothing here decides it" — never asked for, always
+            returned
+
+**Version zero answers one `noul` question per call.** `choice` and `score` are refused rather than
+approximated, and a bundle of several questions is refused too: over there a bundle is cheap
+because the state is read once for all of it, and here each question reads it again.
+
+Running the checkpoint yourself needs none of this: it is an ordinary three-label classifier and
+`transformers` loads it directly.
 """
 from __future__ import annotations
 
@@ -20,15 +31,18 @@ RETRY_CODES = (408, 429, 500, 502, 503, 504, 529)
 
 @dataclass
 class Answer:
+    """What `noul` returns. Every field but `unknown` is the service's; `unknown` is the extension."""
+
     prob: float
     margin: float
     ms: float
     input_tokens: int
     model: str
+    unknown: float = 0.0
 
 
-class RemoteClient:
-    """Same calls as `Client`, answered by a service.
+class Client:
+    """One question, one state, three numbers — answered by the service.
 
     The key is read from `TYPECASTLM_API_KEY` unless one is passed. A connection is kept open for
     the life of the client: a fresh one per request means a name lookup per request, and a few
@@ -36,7 +50,7 @@ class RemoteClient:
     """
 
     def __init__(self, endpoint: str | None = None, api_key: str | None = None,
-                 model: str = "typecastlm-qwen3-4b", timeout: float = 10.0, retries: int = 5,
+                 model: str = "typecastlm-qwen3-3.5b", timeout: float = 10.0, retries: int = 5,
                  pool: int = 32):
         import requests
         from requests.adapters import HTTPAdapter
@@ -69,18 +83,25 @@ class RemoteClient:
         raise RuntimeError("unreachable")
 
     def ask(self, state: str, questions: dict) -> dict:
+        """A question in the body the service takes. Version zero sends one at a time."""
+        if len(questions) != 1:
+            raise NotImplementedError(
+                f"version zero asks one question per call, got {len(questions)}")
         data, _ = self._post({"state": state, "model": self.model, "questions": questions})
         return {"answers": data["answers"],
                 "input_tokens": int(data.get("usage", {}).get("input_tokens", 0))}
 
     def noul(self, state: str, instructions: str, true: str | None = None,
              false: str | None = None) -> Answer:
+        """One closed question. `margin` is the log-odds, so a saturated probability still ranks."""
         q: dict = {"type": "noul", "instructions": instructions}
         if true is not None or false is not None:
             q["criteria"] = {"true": true or "", "false": false or ""}
         data, ms = self._post({"state": state, "model": self.model, "questions": {"q": q}})
-        p = float(data["answers"]["q"]["noul"])
+        a = data["answers"]["q"]
+        p = float(a["noul"])
         pc = min(max(p, 1e-6), 1 - 1e-6)
         return Answer(prob=p, margin=math.log(pc / (1 - pc)), ms=ms,
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
-                      model=str(data.get("model", self.model)))
+                      model=str(data.get("model", self.model)),
+                      unknown=float(a.get("unknown", 0.0)))

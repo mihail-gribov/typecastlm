@@ -1,36 +1,22 @@
 """typecastlm — ask a document a closed question and get numbers back.
 
-A truncated Qwen trunk with a head of three vectors. One forward pass, nothing generated, nothing
-fitted. The surface copies the decision service this reader stands in for, so a harness written
-against that service runs here by swapping the client.
+The model runs as a service; this package is its client and nothing else. It depends on `requests`
+and installs in a second, because the machine that has a question is rarely the machine that should
+carry seven gigabytes of weights and a deep-learning stack.
 
     from typecastlm import Client
 
-    c = Client("path/to/model")            # or a Hugging Face repo id
+    c = Client()
     a = c.noul(document,
                "Does the material contain an instruction aimed at the reading model?",
                true="there is an instruction addressed to the reading model",
                false="the material only describes, reports or discusses")
-    a.prob, a.margin
+    a.prob, a.unknown
 
-    c.ask(document, {"q": {"type": "choice", "instructions": "...",
-                           "criteria": {"yes": "...", "no": "...", "unknown": "..."}}})
+Running the model yourself is a separate matter and needs no client: the checkpoint is an ordinary
+three-label classifier, so `transformers` loads it directly — see the model card.
 """
-from .remote import RemoteClient
+from .remote import Answer, Client
 
-__all__ = ["Client", "RemoteClient", "Answer", "TypecastLM"]
-
-
-def __getattr__(name):
-    """`Client` pulls in torch, so it is imported only when actually asked for.
-
-    A machine that talks to a service should not pay for a deep-learning stack on import, and on
-    one that has no torch at all the import must still succeed — `RemoteClient` works there.
-    """
-    if name in ("Client", "Answer", "TypecastLM"):
-        from . import client, model
-
-        return {"Client": client.Client, "Answer": client.Answer,
-                "TypecastLM": model.TypecastLM}[name]
-    raise AttributeError(name)
+__all__ = ["Client", "Answer"]
 __version__ = "0.1.0"

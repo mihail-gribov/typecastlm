@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "typecastlm"
 version = "0.1.0"
-description = "Ask a document a closed question and get probabilities back: a truncated Qwen trunk read through its own head"
+description = "Ask a document a closed question and get probabilities back: yes, no, and nothing-here-decides-it"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Mikhail Gribov", email = "mihail.gribov.rs@gmail.com" }]
@@ -19,20 +19,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-# Лёгкий по умолчанию: клиент к сервису не должен тащить стек глубокого обучения на машину,
-# которой считать нечего. Локальный прогон — это `typecastlm[local]`.
+# One dependency, and it stays that way. The model runs as a service; the machine that has a
+# question should not have to install a deep-learning stack to ask it.
 dependencies = [
     "requests>=2.28",
 ]
 
 [project.optional-dependencies]
-local = [
-    "torch>=2.2",
-    "transformers>=4.51",
-    "huggingface-hub>=0.24",
-    "safetensors>=0.4",
-]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "build>=1.0", "twine>=5.0"]
 
 [project.scripts]
 typecastlm = "typecastlm.cli:main"
