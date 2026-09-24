@@ -11,8 +11,8 @@ numbers back. Four modes:
 | **`scale`** | an ordinal rubric, up to 10 levels | a probability per level |
 
 Three of them — `noul`, `choice` and `scale` — carry Jev's names, Jev's arguments and Jev's
-fields, so calling code written against that interface keeps its shape. The fourth, `tfu`, is ours:
-Jev has nothing like it. The HTTP contract is in [docs/API.md](docs/API.md), laid out the way the
+fields, so calling code written against that interface keeps its shape. The fourth, `tfu`, is
+ours: Jev has nothing like it. The HTTP contract is in [docs/API.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md), laid out the way the
 Jev reference is.
 
 **The third answer is what a two-answer reader cannot give.** The model has an output for "neither
@@ -102,7 +102,7 @@ a = c.noul(doc, "Is the claim covered?",
            true="the policy covers it", false="the policy excludes it")
 
 a.prob        # 0.95  — p(true) between the two answers that decide the question
-a.margin      # +2.87 — the same number as log-odds, so a saturated probability still ranks
+a.margin      # +2.94 — the same number as log-odds, so a saturated probability still ranks
 a.logits      # the raw outputs, as the service sent them
 ```
 
@@ -163,6 +163,22 @@ otherwise with the next mark from `0…9ABC…`. Ten levels is the practical lim
 marks are read worse than the rubric is written. Nothing in the reading enforces the order, so a
 distribution with two separated peaks is possible and means the rubric is being read as categories.
 
+### The same modes in this process
+
+`Reader` answers the same four questions without HTTP and returns plain dictionaries rather than
+objects:
+
+| over HTTP | in-process | what comes back |
+|---|---|---|
+| `c.noul(...)` | `r.noul(...)` | `{"p": {"yes", "no"}, "logits"}` |
+| `c.tfu(...)` | `r.tfu(...)` | `{"p": {"true", "false", "unsure"}, "verdict", "logits"}` |
+| `c.choice(...)` | `r.choice(...)` | `{"p": {option: prob}, "marks", "logits"}` |
+| `c.scale(...)` | `r.scale(...)` | the same, keyed by level |
+
+The reader takes its options as `[(name, description), …]` where the client takes a map, and it
+applies the same shipped temperatures. `reader.py` beside the weights is this same code with no
+package around it.
+
 ### Several questions at once
 
 ```python
@@ -180,7 +196,7 @@ c.ask(policy, {
 Any mix of the four modes in one call, keyed by names you choose; `type` is `noul`, `tfu`,
 `choice` or `score`, which this client also spells `scale`. Unlike the four methods above, this
 one hands back the service's answer objects as they came, so you read the fields yourself — see
-[docs/API.md](docs/API.md). The state is currently read again for each question, so a bundle costs
+the [API reference](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md). The state is currently read again for each question, so a bundle costs
 what the same questions cost one by one; sharing the prefix across a hybrid trunk is not
 implemented yet.
 
@@ -210,9 +226,15 @@ different difficulty. Fit your own:
 ```python
 from typecastlm import calibrate
 
-rows = [(c.noul(text, q, true=T, false=F).logits, gold) for text, gold in my_labelled]
-mine = Client(temperature=calibrate(rows)["temperature"])
+rows = [(c.noul(text, q, true=T, false=F).logits, gold)      # gold is "true" or "false"
+        for text, q, gold in my_labelled]
+fitted = calibrate(rows, keys=("true", "false"))             # the two answers `noul` reads
+mine = Client(temperature=fitted["temperature"])
 ```
+
+`keys` matters: a `noul` answer carries the third logit as well, and fitting over all three fits
+`tfu`'s temperature instead — on the same rows that is 1.1 where 0.6 is right. Two hundred rows
+are enough, because one number is free.
 
 `Client(temperature=…)` uses that one value for every mode, so fit it for the mode you actually
 ask in; `Client(calibrated=False)` turns the shipped temperatures off and leaves the logits as
@@ -242,7 +264,7 @@ Route, request body, answer objects and error codes are that API's, field for fi
 written against it reaches this service by changing the base URL. Added rather than changed: the
 question type `tfu`, `logits` on every answer, and `calibration` on the body — with those, an
 answer can be re-read at another temperature without asking anything twice. The whole contract is
-in [docs/API.md](docs/API.md).
+in the [API reference](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md).
 
 `--api-key` requires a bearer token; without it the service answers anyone who can reach the port.
 The prompt travels with the weights, `--prompt` replaces the wording the model was measured with,

@@ -13,11 +13,12 @@ shifts on top buys 0.005 of calibration error and no accuracy.
     from typecastlm import Client, calibrate
 
     rows = [(c.noul(t, q, true=T, false=F).logits, gold) for t, gold in my_labelled]
-    T = calibrate(rows)["temperature"]
+    T = calibrate(rows, keys=("true", "false"))["temperature"]      # the two `noul` decides over
     c = Client(temperature=T)
 
-The same function serves a choice or a scale: pass the logits that mode returned and the correct
-key, and fit one temperature per mode you use.
+The same function serves every mode: pass the logits that mode returned and the answer that was
+right. `keys` says which of them the mode reads — for `noul` that is the two criteria, since the
+third answer belongs to `tfu` and carries a temperature of its own.
 """
 from __future__ import annotations
 
@@ -45,18 +46,27 @@ def _ece(conf: list[float], ok: list[bool], bins: int = 10) -> float:
 
 
 def calibrate(rows: list[tuple[dict, str]], grid: tuple[float, float, float] = (0.6, 4.0, 0.05),
-              ) -> dict:
+              keys: tuple[str, ...] | list[str] | None = None) -> dict:
     """One temperature from labelled rows, each a pair `(logits, correct answer)`.
 
     `logits` is the dictionary an answer carries (`Answer.logits`, `Choice.logits`); the correct
-    answer is one of its keys. The temperature is chosen to minimise calibration error — NOT
-    cross-entropy, which pulls towards numbers that read worse: on our own three-answer mode it
-    picked 5.63 where 2.85 is right, and made the error larger, not smaller.
+    answer is one of its keys. `keys` restricts the softmax to the answers the mode is read over,
+    which matters for `noul`: its logits carry the third answer too, and fitting over all three
+    would fit `tfu`\'s temperature instead. The temperature is chosen to minimise calibration
+    error — NOT cross-entropy, which pulls towards numbers that read worse: on our own
+    three-answer mode it picked 5.63 where 2.85 is right, and made the error larger, not smaller.
 
     Two or three hundred rows are enough, because one number is free.
     """
     if len(rows) < 30:
         raise ValueError(f"thirty rows is the floor, got {len(rows)}")
+    if keys is not None:
+        missing = [k for k in keys if k not in rows[0][0]]
+        if missing:
+            raise ValueError(f"{missing} not among the answers {list(rows[0][0])}")
+        rows = [({k: z[k] for k in keys}, g) for z, g in rows]
+        if any(g not in keys for _, g in rows):
+            raise ValueError(f"every correct answer must be one of {list(keys)}")
     keys = list(rows[0][0])
     for z, g in rows:
         if list(z) != keys:
