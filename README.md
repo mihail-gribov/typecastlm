@@ -72,7 +72,8 @@ prompt.
 
 ## Calibration
 
-The checkpoint ships a temperature per mode and the client applies it. What each was fitted on:
+The values are in the checkpoint's `prompt.json` under `calibration`, one temperature per mode,
+and the client applies them. What each was fitted on:
 
 | mode | fitted on |
 |---|---|
