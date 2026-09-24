@@ -189,8 +189,8 @@ class Client:
                        model=str(data.get("model", self.model)))
 
     def ask(self, state: str, questions: dict) -> dict:
-        """Any number of questions about one state. The state is read once for the bundle;
-        results equal asking one by one."""
+        """Any number of questions about one state, answered in one call. The state is currently
+        read again for each question, so a bundle costs what the questions cost separately."""
         if not questions:
             raise ValueError("no questions")
         data, _ = self._post({"state": state, "model": self.model, "questions": questions})
