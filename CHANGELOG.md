@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.2
+
+**Fixed**
+
+- The service refused a `state` that was not a string. The API this follows takes a string, an
+  object or an array, and a caller sending structured material got a 422 — on a public suite of
+  231 decisions that was 35 of them. An object or an array is now rendered as JSON, which is what
+  the readers were measured on.
+
+**Added**
+
+- `choice` and `score` answers carry `marks`: which letter or digit each option was given. The
+  mark is the option's position, so renaming an option cannot move the answer but reordering can,
+  and until now nothing over HTTP made that visible. Measured on a public suite: reordering the
+  options of 213 questions flipped 29 verdicts. README and `docs/API.md` now say so, and
+  normalising the per-letter bias does not fix it — the letter and the position are the same
+  number, and subtracting it removes one flip in eighteen.
+
 ## 1.1.1
 
 `NOTICE` only — no code changed. It still described the head as 29 rows, which it stopped being

@@ -43,4 +43,4 @@ def __getattr__(name: str):
                               "pip install 'typecastlm[local]'") from e
         return Reader
     raise AttributeError(name)
-__version__ = "1.1.1"
+__version__ = "1.1.2"
