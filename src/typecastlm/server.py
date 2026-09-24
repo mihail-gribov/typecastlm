@@ -193,50 +193,15 @@ class Reader:
         return text + "Answer: "
 
     def answer_many(self, state: str, questions: dict) -> tuple[dict, int]:
-        """Answer several questions about one state."""
-        from transformers import DynamicCache
+        """Answer several questions about one state.
 
-        # Sharing the prefix across a hybrid trunk is not implemented yet: the questions are
-        # answered one by one, which costs what asking them separately costs.
+        Sharing the prefix across a hybrid trunk is not implemented yet, so the questions are
+        answered one by one and a bundle costs what asking them separately costs.
+        """
         out, tokens = {}, 0
         for key, q in questions.items():
             ans, t = self.answer(state, q)
             out[key], tokens = ans, tokens + t
-        return out, tokens
-
-        built = [(key, self.prepare(state, q)) for key, q in questions.items()]
-        fulls = [self.tok(text, add_special_tokens=False)["input_ids"] for _, (text, _, _) in built]
-        n_min = min(len(f) for f in fulls)
-        n = 0
-        while n < n_min and len({f[n] for f in fulls}) == 1:
-            n += 1
-        if n < 32 or len(fulls) == 1:                 # nothing worth sharing
-            out, tokens = {}, 0
-            for key, q in questions.items():
-                ans, t = self.answer(state, q)
-                out[key], tokens = ans, tokens + t
-            return out, tokens
-
-        cache = DynamicCache()
-        pre = self.torch.tensor([fulls[0][:n]], device=self.device)
-        with self.torch.no_grad():
-            self.model.model(input_ids=pre, attention_mask=self.torch.ones_like(pre),
-                             past_key_values=cache, use_cache=True)
-        out, tokens = {}, n
-        for (key, (_, keys, wanted)), full in zip(built, fulls):
-            ids = self.torch.tensor([full[n:]], device=self.device)
-            pos = self.torch.arange(n, len(full), device=self.device)[None]
-            with self.torch.no_grad():
-                h = self.model.model(input_ids=ids, past_key_values=cache, use_cache=True,
-                                     position_ids=pos,
-                                     attention_mask=self.torch.ones(1, len(full),
-                                                                    device=self.device,
-                                                                    dtype=self.torch.long))
-                z = self.model.score(h.last_hidden_state[0, -1]).float().cpu()
-            cache.crop(n)
-            out[key] = {"kind": q_kind(questions[key]),
-                        "logits": {k: float(z[i]) for k, i in zip(keys, wanted)}}
-            tokens += len(full) - n
         return out, tokens
 
     def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int]]:

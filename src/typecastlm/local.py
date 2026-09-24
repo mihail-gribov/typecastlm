@@ -1,9 +1,10 @@
-"""Read this checkpoint in three decision shapes. Requires `transformers` only.
+"""Read this checkpoint in its four modes: `ask` returns the verdict and the third answer
+from one pass, `choice` and `scale` the other two. Requires `transformers` only.
 
     ask(state, question, true, false)      -> {"p": {"yes","no"}, "p_unsure", "logits"}
     choice(state, question, options)       -> {"p": {option: prob}, "logits", "marks"}
     scale(state, question, levels)         -> same, for an ordinal rubric
-    ask_many(state, questions)             -> list of ask() results, material read once
+    ask_many(state, questions)             -> one ask() result per question
 
 Options are marked with letters, rubric levels with their own digits when those are single
 tokens, otherwise with `0..9A..P`. Marks above ten levels degrade. Probabilities use the

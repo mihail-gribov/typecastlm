@@ -5,37 +5,74 @@ numbers back. Four modes:
 
 | mode | the question | the answer |
 |---|---|---|
-| **`noul`** | yes or no, two criteria | `p(yes)` among the two, plus `unknown` alongside |
+| **`noul`** | yes or no, two criteria | `p(yes)` over the two, and `unknown` as a second number |
 | **`tfu`** | the same question | one distribution over `true`, `false`, **`unsure`** |
 | **`choice`** | 2–16 options, one correct | a probability per option |
 | **`scale`** | an ordinal rubric, up to 10 levels | a probability per level |
 
-**The third answer is what a two-answer reader cannot give.** `unsure` is a separate output, not a
-hedged yes: it comes back whether or not the question asks for it — threshold it to abstain, to
-route to a human, or to drop a document from a pipeline.
+Three of them — `noul`, `choice` and `scale` — carry Jev's names and Jev's arguments, and the
+answer carries Jev's fields, so calling code written against that interface keeps its shape.
+`unknown` is added beside them and not taken from Jev, whose `noul` answers with one probability
+and nothing else; a caller written for Jev ignores the extra field. `tfu` is the fourth mode,
+which Jev does not have at all.
 
-Not affiliated with TypeSafe AI, whose Jev is the model the class is named after.
+**The third answer is what a two-answer reader cannot give.** The model has an output for "neither
+criterion applies", and it is filled whether or not the question offers that way out: `tfu` returns
+it as `unsure` inside one distribution, `noul` returns it as `unknown` beside a yes/no probability
+that does not include it. Threshold it to abstain, to route to a human, or to drop a document from
+a pipeline.
 
 Why this one:
 
-* **Fast** — **40 to 900 ms** per decision depending on the length of the material; nothing is
-  generated, so it is one forward pass and no tokens written.
+* **Fast** — p50 48 ms on material under 200 tokens and 566 ms at 1000–4000, on a 16 GB consumer
+  card: nothing is generated, so a decision is one forward pass and no tokens written.
 * **A third answer.** Two-answer readers must call something a yes; this one does not have to.
-* **Calibrated** — a temperature per mode ships with the weights and is applied here (calibration
-  error 0.011–0.052).
-* **Thin client** — one dependency, `requests`, and it installs in a second. The weights live on
-  the service side.
-* **Four modes**, each with its own calibration.
+* **Calibrated per mode** — one temperature per mode ships with the weights and is applied here;
+  calibration error 0.011–0.052.
+* **Yours to run** — open weights, one command for a local service, and a client with a single
+  dependency for whatever talks to it.
 
 ## Install
 
+There is no hosted endpoint: the weights are open and the service is yours to run. Three ways,
+differing in where the model sits.
+
+**Behind HTTP on this machine** — one command, and `Client()` finds it:
+
+```
+pip install "typecastlm[server]"
+typecastlm-serve --model mihailgribov/typecastlm-qwen3.5-3.8b --port 8000
+export TYPECASTLM_ENDPOINT=http://localhost:8000
+```
+
+**In this process**, without HTTP:
+
+```
+pip install "typecastlm[local]"
+```
+
+```python
+from typecastlm import Reader
+
+r = Reader("mihailgribov/typecastlm-qwen3.5-3.8b")
+r.ask(doc, "Is the claim covered?", true="…", false="…")
+```
+
+**Somewhere else** — the client alone, whose one dependency is `requests`:
+
 ```
 pip install typecastlm
-export TYPECASTLM_ENDPOINT=https://…      # your own service; see "Running the service yourself"
+export TYPECASTLM_ENDPOINT=https://your-service
 export TYPECASTLM_API_KEY=…               # only if your service asks for one
 ```
 
-There is no hosted endpoint: the weights are open, so the service is yours to run.
+The first two download 7.5 GB of weights once and run them on a GPU; the numbers below were taken
+on a 16 GB consumer card. On CUDA, add the kernels the hybrid trunk wants — without them it falls
+back to a slow path and p50 triples:
+
+```
+pip install flash-linear-attention fla-core
+```
 
 ## Start
 
@@ -52,30 +89,29 @@ a.prob       # 0.95  — probability of `true` among the two answers that decide
 a.unknown    # 0.01  — how much of the state points at "nothing here decides it"
 ```
 
-The other three modes and everything each returns are below, under **Modes**.
-
 ## Modes
 
 Every mode takes the material and a question and differs in what the answer ranges over. Each is
 one forward pass and carries its own temperature, so a number from one mode is not comparable with
 a number from another.
 
-### `noul` — yes or no, with `unknown` alongside
+### `noul` — yes or no, and how much of the material says neither
 
 ```python
 a = c.noul(doc, "Is the claim covered?",
            true="the policy covers it", false="the policy excludes it")
 
-a.prob        # 0.95  — p(true) among the two answers that decide the question
-a.unknown     # 0.01  — how much of the state points at "neither criterion applies"
+a.prob        # 0.95  — p(true) between the two answers that decide the question
+a.unknown     # 0.02  — the share of "neither criterion applies", outside that pair
 a.margin      # +2.87 — the log-odds, so a saturated probability still ranks
-a.p           # all three probabilities, before the two were renormalised
+a.p           # {'true': 0.94, 'false': 0.05, 'unsure': 0.02} — all three, before the pair was
+              #   renormalised into `prob`
 ```
 
 `instructions` says what is asked, the two criteria say what each side means; write them as
 descriptions of the material, not as commands. The verdict is `prob >= 0.5`, which is the
-threshold this mode is calibrated for. `unknown` is returned whether or not the question invites
-it, and it is thresholded on its own rather than compared against `prob`.
+threshold this mode is calibrated for. Because `prob` is read between `true` and `false` alone,
+`unknown` is not part of it and cannot lower it: threshold the two separately.
 
 ### `tfu` — one distribution over three answers
 
@@ -87,16 +123,17 @@ t.verdict     # 'true'
 t.confidence  # 0.81
 ```
 
-The same two criteria and the same reading as `noul`, softmaxed over all three outputs instead of
-over the two. Use it where "nothing here decides it" is an answer you act on, and `noul` where you
-need a number comparable with a two-answer detector. There is no third criterion to write:
-`unsure` is what is left when neither of the two fits.
+The same two criteria and the same three outputs as `noul`, but softmaxed over all three instead
+of over the deciding pair, so here the third answer competes with the other two. Use it where
+"nothing here decides it" is an answer you act on, and `noul` where you need a number comparable
+with a two-answer detector. There is no third criterion to write: `unsure` is what is left when
+neither of the two fits.
 
 ### `choice` — one of 2 to 16 options
 
 ```python
 r = c.choice(policy, "How should this claim be settled?",
-             {"deny_vacancy":     "excluded as repeated seepage",
+             {"deny_vacancy":      "excluded as repeated seepage",
               "pay_with_sublimit": "covered but capped by the concealed-water sublimit",
               "pay_in_full":       "covered in full"})
 
@@ -107,8 +144,8 @@ r.confidence  # 0.74 — the probability of the leader, not a separate number
 
 Exactly one option is correct and the options carry no order. Inside they are marked `A`, `B`,
 `C`…, one output row per mark; your names travel from the request to the answer and never reach
-the prompt, so renaming an option cannot move the answer. Two options are allowed but `noul` reads
-a two-way question better, because its two rows were fitted for that question and the marks were
+the prompt, so renaming an option cannot move the answer. Two options are allowed, but `noul`
+reads a two-way question better, because its rows were fitted for that question and the marks were
 not.
 
 ### `scale` — a level on an ordinal rubric
@@ -140,11 +177,19 @@ c.ask(policy, {
 ```
 
 Any mix of the four modes in one call, keyed by names you choose; `type` is `noul`, `tfu`,
-`choice` or `scale`, which the wire also spells `score`. Unlike the four methods above
-this one hands back raw logits rather than a typed answer, so the softmax and the temperature of
-each mode are yours to apply. The state is currently read again for each question, so a bundle
-costs what the same questions cost one by one; sharing the prefix across a hybrid trunk is not
-implemented yet.
+`choice` or `scale`, which the wire also spells `score`. Unlike the four methods above, this one
+hands back raw logits rather than a typed answer, so the softmax and the temperature of each mode
+are yours to apply. The state is currently read again for each question, so a bundle costs what
+the same questions cost one by one; sharing the prefix across a hybrid trunk is not implemented
+yet.
+
+## Numbers
+
+JevBench v1.2, public set of 231 tasks: **0.792** overall, and 1.000 / 0.917 / 0.622 on its easy,
+standard and hard tiers. On public validation splits, AUC 0.939 on BoolQ, 0.955 on RTE and 0.943
+on FEVER, where the third answer separates `NOT ENOUGH INFO` from decidable rows with AUC 0.713.
+The full tables, the speed grid and what each was measured on are in the
+[model card](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b).
 
 ## Calibration
 
@@ -164,27 +209,38 @@ different difficulty. Fit your own:
 ```python
 from typecastlm import calibrate
 
-rows = [(c.noul(t, q, true=T, false=F).logits, gold) for t, gold in my_labelled]
-c = Client(temperature=calibrate(rows)["temperature"])
+rows = [(c.noul(text, q, true=T, false=F).logits, gold) for text, gold in my_labelled]
+mine = Client(temperature=calibrate(rows)["temperature"])
 ```
 
-`Client(calibrated=False)` turns the shipped ones off.
+`Client(temperature=…)` uses that one value for every mode, so fit it for the mode you actually
+ask in; `Client(calibrated=False)` turns the shipped temperatures off and leaves the logits as
+they are.
 
 ## Running the service yourself
 
 ```
-pip install "typecastlm[server]"
 typecastlm-serve --model mihailgribov/typecastlm-qwen3.5-3.8b --port 8000
 ```
 
 It downloads the weights on first start, checks that the checkpoint fits the interface, and serves
-`POST /v1/typecast` and `GET /health`. `--prompt` replaces the wording it was measured with —
-after which the numbers in the model card describe something else, which is why `/health` reports
-where the wording came from.
+two routes:
 
-The server returns raw logits and computes no softmax: the probabilities, the temperature and the
-mode are the caller's business, and the same answer can be read again at another temperature
-without asking anything twice.
+```
+curl localhost:8000/health
+curl localhost:8000/v1/typecast -H 'content-type: application/json' -d '{
+  "state": "…the material…",
+  "questions": {"q": {"type": "noul", "instructions": "Is the claim covered?",
+                      "criteria": {"true": "…", "false": "…"}}}}'
+# {"answers": {"q": {"kind": "noul", "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
+#  "usage": {"input_tokens": 131}, "model": "…", "calibration": {...}}
+```
+
+The service returns raw logits and computes no softmax, so the probabilities, the temperature and
+the mode stay with the caller and one answer can be read again at another temperature without
+asking anything twice. The prompt travels with the weights; `--prompt` replaces the wording the
+model was measured with, and `/health` reports which wording is in use so a changed one is visible
+rather than assumed.
 
 ## Using the model without any of this
 
@@ -196,3 +252,5 @@ The checkpoint is an ordinary classifier with 29 outputs, so `transformers` load
 
 Apache-2.0 — this package, its texts, and the model it reads (derived from Qwen3.5-4B, also
 Apache-2.0). `LICENSE` and `NOTICE` carry the terms and the list of changes.
+
+Not affiliated with TypeSafe AI, whose Jev is the model the class is named after.
