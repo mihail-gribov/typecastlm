@@ -86,12 +86,15 @@ def test_the_service_answers_in_the_shape_of_the_api_it_copies():
     tfu = r.read("tfu", {"true": 3.0, "false": 0.0, "unsure": -1.0}, {})
     assert set(tfu) == {"type", "tfu", "probabilities", "confidence"}
 
-    choice = r.read("choice", {"a": 1.0, "b": 2.0}, {})
+    choice = r.read("choice", {"a": 1.0, "b": 2.0}, {}, ["A", "B"])
     assert choice["choice"] == "b" and choice["confidence"] == choice["probabilities"]["b"]
+    # The mark is the position, so the answer has to say which option got which: reordering the
+    # options changes the reading, and a caller cannot see that from names alone.
+    assert choice["marks"] == {"a": "A", "b": "B"}
 
     legend = {"0": "Calm", "1": "Frustrated", "2": "Very angry"}
-    score = r.read("score", {"0": -3.0, "1": 4.0, "2": 1.0}, legend)
-    assert set(score) == {"type", "score", "legend", "probabilities", "confidence"}
+    score = r.read("score", {"0": -3.0, "1": 4.0, "2": 1.0}, legend, ["0", "1", "2"])
+    assert set(score) == {"type", "score", "legend", "probabilities", "confidence", "marks"}
     # The level is a mean over positions, so it lands between levels and can pass 1.
     p = score["probabilities"]
     assert score["score"] == pytest.approx(p["1"] + 2 * p["2"])

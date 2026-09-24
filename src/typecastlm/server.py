@@ -227,7 +227,7 @@ class Reader:
             text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         return text + self.prompt_cfg["tail"]
 
-    def answer_many(self, state: str, questions: dict) -> tuple[dict, int]:
+    def answer_many(self, state, questions: dict) -> tuple[dict, int]:
         """Answer several questions about one state.
 
         Sharing the prefix across a hybrid trunk is not implemented yet, so the questions are
@@ -246,13 +246,20 @@ class Reader:
                              f"answers {self.KINDS}")
         return kind
 
-    def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[str] | None, dict]:
+    @staticmethod
+    def as_text(state) -> str:
+        """The material as text. An object or an array becomes JSON, which is what the readers
+        were measured on and what a caller sending structured state expects to be read."""
+        return state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
+
+    def prepare(self, state, q: dict) -> tuple[str, list[str], list[str] | None, dict]:
         """Prompt text, answer names, the marks that carry them if any, and the legend.
 
         `criteria` is a map of names to descriptions, and for `score` it may also be an ordered
         list, which is the form the Jev API documents; a list is read as levels 0, 1, 2 and so on.
         """
         kind = self.kind_of(q)
+        state = self.as_text(state)
         crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
         if kind in ("noul", "tfu"):
             if len(crit) != 2:
@@ -281,7 +288,7 @@ class Reader:
         return float((self.prompt_cfg.get("calibration", {}).get(mode) or {})
                      .get("temperature", 1.0))
 
-    def read(self, kind: str, logits: dict, legend: dict) -> dict:
+    def read(self, kind: str, logits: dict, legend: dict, marks: list[str] | None = None) -> dict:
         """Logits to the answer body of this question type.
 
         The shape is the Jev API's, field for field, so a caller written against it needs only
@@ -297,12 +304,14 @@ class Reader:
         if kind == "score":
             score = sum(i * p[k] for i, k in enumerate(p))
             return {"type": "score", "score": score, "legend": legend,
-                    "probabilities": p, "confidence": p[lead]}
+                    "probabilities": p, "confidence": p[lead],
+                    "marks": dict(zip(p, marks)) if marks else {}}
         if kind == "choice":
-            return {"type": "choice", "choice": lead, "probabilities": p, "confidence": p[lead]}
+            return {"type": "choice", "choice": lead, "probabilities": p, "confidence": p[lead],
+                    "marks": dict(zip(p, marks)) if marks else {}}
         return {"type": "tfu", "tfu": lead, "probabilities": p, "confidence": p[lead]}
 
-    def answer(self, state: str, q: dict) -> tuple[dict, int]:
+    def answer(self, state, q: dict) -> tuple[dict, int]:
         """One question. Shares `prepare` with the bundle path."""
         text, keys, marks, legend = self.prepare(state, q)
         enc = self.tok([text], return_tensors="pt", add_special_tokens=False).to(self.device)
@@ -313,7 +322,7 @@ class Reader:
                 h = self.model.model(**enc).last_hidden_state[0, -1].float()
                 z = self.torch.tensor([float((self.mark_rows(m) @ h).max()) for m in marks])
         logits = {k: float(v) for k, v in zip(keys, z)}
-        out = self.read(self.kind_of(q), logits, legend)
+        out = self.read(self.kind_of(q), logits, legend, marks)
         out["logits"] = logits
         return out, int(enc["attention_mask"].sum())
 
@@ -329,7 +338,9 @@ def _request_model():
     from pydantic import BaseModel
 
     class Ask(BaseModel):
-        state: str
+        # `state` is a string, an object or an array: the API this follows takes all three, and a
+        # third of the benchmark's own items send an object. A non-string is rendered as JSON.
+        state: str | dict | list
         questions: dict
         model: str | None = None
 

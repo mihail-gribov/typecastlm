@@ -149,9 +149,13 @@ r.verdict     # 'pay_with_sublimit'
 r.confidence  # 0.74 — the probability of the leader, not a separate number
 ```
 
-Exactly one option is correct and the options carry no order. Inside they are marked `A` to `Z`,
-one row per mark; your names travel from the request to the answer and never reach the prompt, so
-renaming an option cannot move the answer. Twenty-six is where single-token marks run out. Reading
+Exactly one option is correct and the options carry no order of their own. Inside they are marked
+`A` to `Z` **in the order you list them**, one row per mark; your names travel from the request to
+the answer and never reach the prompt, so renaming an option cannot move the answer — but
+reordering can, because the mark is the position. Send the options in a fixed order and the
+readings are comparable across documents; shuffle them and they are not. The size of it, measured
+on JevBench: reordering the options of 213 tasks flipped 29 verdicts, 1.3 % of accuracy. `marks`
+in the answer says which option got which letter. Twenty-six is where single-token marks run out. Reading
 holds to about six options and then slips — measured on a synthetic task with one right answer
 among K: 0.995 up to six, 0.965 at eight, 0.935 at twelve, 0.86 from sixteen on. Two options are
 allowed, but `noul` reads a two-way question better, because its rows were fitted for that
@@ -220,9 +224,10 @@ implemented yet.
 
 ## Numbers
 
-JevBench v1.2, public set of 231 tasks: **0.792** overall, and 1.000 / 0.917 / 0.622 on its easy,
-standard and hard tiers. On public validation splits, AUC 0.939 on BoolQ, 0.955 on RTE and 0.943
-on FEVER, where the third answer separates `NOT ENOUGH INFO` from decidable rows with AUC 0.713.
+JevBench public set, 231 tasks, run by the benchmark's own harness against this service:
+**0.779**, calibration error 0.062, p50 51 ms. On public validation splits, AUC 0.939 on BoolQ,
+0.955 on RTE and 0.943 on FEVER, where the third answer separates `NOT ENOUGH INFO` from decidable
+rows with AUC 0.713.
 The full tables, the speed grid and what each was measured on are in the
 [model card](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b).
 

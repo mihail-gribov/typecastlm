@@ -143,11 +143,15 @@ call can be re-read as the other only at that other mode's temperature.
 ```json
 {"type": "choice", "choice": "billing",
  "probabilities": {"billing": 0.88, "technical": 0.12, "sales": 0.0}, "confidence": 0.81,
+ "marks": {"billing": "A", "technical": "B", "sales": "C"},
  "logits": {"billing": 4.1, "technical": 1.9, "sales": -3.0}}
 ```
 
-Keys are your option names throughout; inside they are marked `A` to `Z` and the marks do not
-appear in the answer.
+Keys are your option names throughout; inside they are marked `A` to `Z` **in the order the
+`criteria` map lists them**, and `marks` in the answer says which option got which. The mark is
+the position, so renaming an option cannot move the answer and reordering can: on the benchmark's
+213 option tasks, reordering flipped 29 verdicts. Fix the order if you want readings that compare
+across documents.
 
 ### `score`
 
@@ -158,7 +162,7 @@ appear in the answer.
  "logits": {"0": -3.0, "1": 4.0, "2": 1.0}}
 ```
 
-`score` is the mean level, `sum(i * p(i))` over the levels in the order you gave them, so it lies
+`marks` names the mark each level was given. `score` is the mean level, `sum(i * p(i))` over the levels in the order you gave them, so it lies
 between 0 and one less than the number of levels and lands between levels: 1.05 is just past
 `Frustrated`. Positions carry the arithmetic, never the mark, so a level marked `A` because it is
 the eleventh counts as 11. `legend` says what each position means, which is what makes that number readable.
