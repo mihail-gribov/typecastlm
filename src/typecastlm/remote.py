@@ -40,7 +40,8 @@ class Ternary:
 @dataclass
 class Choice:
     """What `choice` and `scale` return: a probability per option and which one leads. Keys are
-    the option names from the request."""
+    the option names from the request. `scale` also fills `score`, the mean level — the answer
+    lands between levels, which is what an ordinal rubric is for."""
 
     p: dict[str, float]
     verdict: str
@@ -49,6 +50,7 @@ class Choice:
     ms: float
     input_tokens: int
     model: str
+    score: float | None = None      # `scale` only: the mean level, between 0 and len - 1
 
 
 @dataclass
@@ -68,7 +70,7 @@ class Answer:
 
 
 class Client:
-    """One question, one state, three numbers — answered by the service.
+    """One question about one state, answered by the service in numbers.
 
     The key is read from `TYPECASTLM_API_KEY` unless one is passed. A connection is kept open for
     the life of the client: a fresh one per request means a name lookup per request, and a few
@@ -94,7 +96,9 @@ class Client:
         self.key = api_key or os.environ.get("TYPECASTLM_API_KEY", "")
         self.model, self.timeout, self.retries = model, timeout, retries
         self._s = requests.Session()
-        self._s.mount("https://", HTTPAdapter(pool_connections=pool, pool_maxsize=pool))
+        adapter = HTTPAdapter(pool_connections=pool, pool_maxsize=pool)
+        for scheme in ("https://", "http://"):       # a service of your own is usually http
+            self._s.mount(scheme, adapter)
         self._requests = requests
         # The calibration travels with the service's answer: it belongs to the checkpoint, not to
         # the client. A temperature passed here overrides it, `calibrated=False` turns it off.
@@ -116,6 +120,7 @@ class Client:
         delay = 1.0
         for attempt in range(self.retries + 1):
             t0 = time.perf_counter()
+            wait = None
             try:
                 headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
                 r = self._s.post(self.endpoint, json=body, headers=headers, timeout=self.timeout)
@@ -124,11 +129,13 @@ class Client:
                     return r.json(), ms
                 if r.status_code not in RETRY_CODES or attempt == self.retries:
                     raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+                # A service that says when to come back knows better than our doubling.
+                ra = r.headers.get("retry-after", "")
+                wait = float(ra) if ra.replace(".", "", 1).isdigit() else None
             except self._requests.RequestException:
                 if attempt == self.retries:
                     raise
-            ra = None
-            time.sleep(float(ra) if ra else delay)
+            time.sleep(wait if wait is not None else delay)
             delay = min(delay * 2, 30.0)
         raise RuntimeError("unreachable")
 
@@ -159,10 +166,12 @@ class Client:
         # A service that sends finished probabilities and no logits — Jev itself, for one — is
         # answered from those; the temperature has then already been applied by whoever fitted it.
         p = self._soft(z, "scale" if kind == "score" else "choice") if z else a["probabilities"]
-        lead = a.get(kind) if a.get(kind) in p else max(p, key=p.get)
+        named = a.get(kind)                     # `choice` names the leader; `score` gives a number
+        lead = named if isinstance(named, str) and named in p else max(p, key=p.get)
+        mean = sum(i * v for i, v in enumerate(p.values())) if kind == "score" else None
         return Choice(p=p, verdict=lead, confidence=p[lead], logits=z, ms=ms,
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
-                      model=str(data.get("model", self.model)))
+                      model=str(data.get("model", self.model)), score=mean)
 
     def _three(self, logits: dict) -> dict[str, float]:
         """Three probabilities from three logits, at the three-answer temperature."""
@@ -176,7 +185,7 @@ class Client:
             false: str | None = None) -> Ternary:
         """The three answers, unreduced — our type, beside the compatible one.
 
-        The criteria are still two: `unknown` is not something anyone states, it is what is left
+        The criteria are still two: `unsure` is not something anyone states, it is what is left
         when neither of the two fits. The temperature of this client applies here as well.
         """
         q: dict = {"type": "tfu", "instructions": instructions}

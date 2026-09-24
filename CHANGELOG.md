@@ -30,6 +30,17 @@ Jev's, field for field.
 - `score` accepts an ordered list of levels, the form the Jev API documents; a map still works and
   then its keys are what comes back.
 - `usage.output_tokens`, always 0 — nothing is generated.
+- `Choice.score` on a `scale` answer: the mean level, which the service was already returning and
+  the client dropped.
+- `tests/live_service.py` — the client against a running service: four modes, a bundle, the
+  refusals and the key. Not part of `pytest`, because it needs weights.
+
+**Fixed**
+
+- The client never honoured `Retry-After`: the value was read into a variable that had just been
+  set to `None`, so a service asking for a longer pause got the doubling instead.
+- The connection pool was mounted for `https://` only, so a local service — which is the usual
+  one, since there is no hosted endpoint — fell back to the default pool.
 - `--api-key` on the service: a bearer token, and 401 without it. Validation failures answer 422.
 - `docs/API.md` — the whole HTTP contract, laid out the way the reference it follows is.
 - `scripts/sync_model.py --check` proves that the reader shipped beside the weights is this

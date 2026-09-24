@@ -157,11 +157,13 @@ r = c.scale(review, "How positive is this review overall?",
              "3": "positive", "4": "very positive"})
 
 r.p           # {'0': 0.06, '1': 0.08, '2': 0.11, '3': 0.54, '4': 0.20}
-r.verdict     # '3'
+r.verdict     # '3'    — the level that leads
+r.score       # 2.75   — the mean level, which is where an ordinal answer really sits
 ```
 
 Levels are ordered, and each is marked with its own digit when that digit is a single character,
-otherwise with the next mark from `0…9ABC…`. Ten levels is the practical limit; past that the
+otherwise with the next mark from `0…9ABC…`. `score` averages the levels by their probabilities,
+so a rubric of three levels answers between 0 and 2 and can land at 1.05. Ten levels is the practical limit; past that the
 marks are read worse than the rubric is written. Nothing in the reading enforces the order, so a
 distribution with two separated peaks is possible and means the rubric is being read as categories.
 

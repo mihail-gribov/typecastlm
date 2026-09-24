@@ -11,14 +11,19 @@ cached, and the prompt comes with them (`prompt.json` beside the weights). That 
 the wording and the weights were measured together, and keeping the wording here instead would let
 the two drift apart.
 
-The body and the answer are the service's own:
+The body and the answer are the Jev API's, field for field, so a client written against that
+interface reaches this service by changing the base URL. Added rather than changed: the question
+type `tfu`, `logits` on every answer, and the checkpoint's `calibration` on the body.
 
-    POST /v1/typecast
-    {"state": "...", "questions": {"q": {"type": "noul", "instructions": "...",
-                                         "criteria": {"true": "...", "false": "..."}}}}
-    -> {"answers": {"q": {"kind": "noul",
-                          "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
-        "usage": {"input_tokens": 131}, "model": "...", "calibration": {...}}
+    POST /v1/systemone
+    {"state": "...", "questions": {"is_urgent": {"type": "noul", "instructions": "...",
+                                                 "criteria": {"true": "...", "false": "..."}}}}
+    -> {"model": "...",
+        "answers": {"is_urgent": {"type": "noul", "noul": 0.95,
+                                  "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
+        "usage": {"input_tokens": 307, "output_tokens": 0}, "calibration": {...}}
+
+The whole contract is in `docs/API.md`.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
@@ -179,7 +185,7 @@ class Reader:
 
     def marks_for(self, keys: list[str], ordinal: bool) -> list[str]:
         """Marks for the options: a rubric\'s own digits when usable, else `0..9A..Z`; letters
-        for a choice."""
+        for a choice. A mark the head lacks is taken from the embedding it was copied from."""
         if ordinal:
             own = [str(k) for k in keys]
             if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and self.mark_row(x) is not None
@@ -384,7 +390,13 @@ def main(argv: list[str] | None = None) -> int:
                          "who can reach the port")
     a = ap.parse_args(argv)
 
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError:                                          # pragma: no cover
+        print("the service needs the extra: pip install \"typecastlm[server]\"\n"
+              "to run the model in your own process instead, without HTTP: "
+              "pip install \"typecastlm[local]\" and use typecastlm.Reader", file=sys.stderr)
+        return 2
 
     print(f"loading {a.model} …", flush=True)
     reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,

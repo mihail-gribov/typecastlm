@@ -9,9 +9,10 @@
 The names are the API's, which are Jev's where Jev has the mode; `ask` and `ask_many` still work
 as the older names of `noul` and `noul_many`.
 
-Options are marked with letters, rubric levels with their own digits when those are single
-tokens, otherwise with `0..9A..P`. Marks above ten levels degrade. Probabilities use the
-per-mode temperature from `prompt.json`; `logits` come back raw.
+Options are marked `A..Z`, rubric levels with their own digits when those are single tokens,
+otherwise with `0..9A..Z`. Reading holds to about six options and slips past twelve; rubrics
+longer than ten levels read poorly. Probabilities use the per-mode temperature from
+`prompt.json`; `logits` come back raw.
 
     from reader import Reader
     r = Reader("mihailgribov/typecastlm-qwen3.5-3.8b")
@@ -51,8 +52,8 @@ class Reader:
                       for i in range(self.model.config.num_labels)]
         self.col = {n: i for i, n in enumerate(self.names)}
         self._rows: dict[str, torch.Tensor | None] = {}      # mark -> the row that reads it
-        # The head emits 29 raw logits: three answers and one per mark. A softmax over all of
-        # them is meaningless — each mode normalises its own subset.
+        # The head emits one logit per answer and one per mark. A softmax over all of them is
+        # meaningless — each mode normalises its own subset.
         self.cal = self.cfg.get("calibration", {})
 
     # -- prompt ---------------------------------------------------------------------------------
@@ -101,7 +102,7 @@ class Reader:
         return self._mark_row(mark) is not None
 
     def _marks_for(self, ids: list[str], ordinal: bool) -> list[str]:
-        """Marks for the options: a rubric\'s own digits when usable, else letters or `0..9A..P`."""
+        """Marks for the options: a rubric\'s own digits when usable, else letters or `0..9A..Z`."""
         if ordinal:
             own = [str(x) for x in ids]
             if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and self._has_mark(x)
