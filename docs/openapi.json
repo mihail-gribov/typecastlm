@@ -1,0 +1,1205 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "typecastlm",
+  "description": "A Jev-class decision model with open weights, behind the Jev API: ask the material a closed question, get a probability back. Send the key as `Authorization: Bearer <key>` when the service asks for one; `GET /health` never does. The reference with the reasoning behind each field is docs/API.md.",
+  "license": {
+   "name": "Apache-2.0"
+  },
+  "version": "1.2.0"
+ },
+ "paths": {
+  "/health": {
+   "get": {
+    "tags": [
+     "deployment"
+    ],
+    "summary": "Which checkpoint, where, with which wording",
+    "operationId": "health_health_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Health"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/models": {
+   "get": {
+    "tags": [
+     "v1"
+    ],
+    "summary": "The checkpoint this service holds, and its alias",
+    "operationId": "models_v1_models_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ModelMetadataList"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "The service requires a key and the `Authorization` header does not carry it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/v1/typecast": {
+   "post": {
+    "tags": [
+     "v1"
+    ],
+    "summary": "The same route under its 1.0.0 name",
+    "description": "Answer one or more questions about the content supplied in `state`.\n\nQuestion types may be mixed in one request. Answers come back under the names the\nquestions were sent under, each of the type its question has. Questions in one call\nread the same state separately, so a bundle costs what the questions cost one by one.",
+    "operationId": "systemone_v1_typecast_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SystemOneRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SystemOneResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "The service requires a key and the `Authorization` header does not carry it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "529": {
+      "description": "The model is busy and the line for it is full; `Retry-After` says in how many seconds to come back.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true,
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/v1/systemone": {
+   "post": {
+    "tags": [
+     "v1"
+    ],
+    "summary": "Answer questions about one piece of material",
+    "description": "Answer one or more questions about the content supplied in `state`.\n\nQuestion types may be mixed in one request. Answers come back under the names the\nquestions were sent under, each of the type its question has. Questions in one call\nread the same state separately, so a bundle costs what the questions cost one by one.",
+    "operationId": "systemone_v1_systemone_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SystemOneRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SystemOneResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "The service requires a key and the `Authorization` header does not carry it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "529": {
+      "description": "The model is busy and the line for it is full; `Retry-After` says in how many seconds to come back.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "ChoiceAnswer": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "choice",
+      "title": "Type"
+     },
+     "choice": {
+      "type": "string",
+      "title": "Choice",
+      "description": "The option with the highest probability.",
+      "examples": [
+       "angry"
+      ]
+     },
+     "probabilities": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Probabilities",
+      "description": "Probability of each option, keyed by its name; they sum to 1."
+     },
+     "confidence": {
+      "type": "number",
+      "title": "Confidence",
+      "description": "The probability of the chosen option."
+     },
+     "marks": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "type": "object",
+      "title": "Marks",
+      "description": "Which letter each option was given, in the order the request listed them.",
+      "examples": [
+       {
+        "angry": "A",
+        "calm": "B"
+       }
+      ]
+     },
+     "logits": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Logits"
+     }
+    },
+    "type": "object",
+    "required": [
+     "type",
+     "choice",
+     "probabilities",
+     "confidence",
+     "marks",
+     "logits"
+    ],
+    "title": "ChoiceAnswer",
+    "description": "The option chosen, and how likely each was."
+   },
+   "ChoiceQuestion": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "choice",
+      "title": "Type",
+      "description": "Identifies a selection among options.",
+      "default": "choice"
+     },
+     "instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Instructions",
+      "description": "What the model should decide when choosing an option.",
+      "examples": [
+       "What is the tone of this message?"
+      ]
+     },
+     "criteria": {
+      "additionalProperties": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        {
+         "items": {},
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "type": "object",
+      "title": "Criteria",
+      "description": "Option names and descriptions of when each applies, 2 to 26 of them. An option without a description is read by its name alone. Options are marked A, B, C… in this order, and the order moves the answer.",
+      "examples": [
+       {
+        "angry": "An upset or hostile message",
+        "calm": "A neutral message"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "criteria"
+    ],
+    "title": "ChoiceQuestion",
+    "description": "One of several named options, with a probability for each."
+   },
+   "Error": {
+    "properties": {
+     "detail": {
+      "type": "string",
+      "title": "Detail",
+      "examples": [
+       "Missing or invalid API key. Check the `Authorization` header."
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "detail"
+    ],
+    "title": "Error"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "Health": {
+    "properties": {
+     "model": {
+      "type": "string",
+      "title": "Model",
+      "description": "The checkpoint as it was loaded: a Hub id or a path."
+     },
+     "name": {
+      "type": "string",
+      "title": "Name",
+      "description": "Its short name, the one answers carry."
+     },
+     "labels": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Labels"
+     },
+     "device": {
+      "type": "string",
+      "title": "Device"
+     },
+     "dtype": {
+      "type": "string",
+      "title": "Dtype"
+     },
+     "prompt": {
+      "type": "string",
+      "title": "Prompt",
+      "description": "Where the wording came from: the model directory, the model repository, or `override: <path>`."
+     },
+     "max_state_tokens": {
+      "type": "integer",
+      "title": "Max State Tokens"
+     },
+     "calibration": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Calibration"
+     },
+     "auth": {
+      "type": "boolean",
+      "title": "Auth",
+      "description": "Whether the `/v1` routes require a key."
+     },
+     "load": {
+      "$ref": "#/components/schemas/Load"
+     },
+     "version": {
+      "type": "string",
+      "title": "Version"
+     },
+     "checks": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       }
+      ],
+      "title": "Checks",
+      "description": "`ok`, or what does not fit the interface."
+     }
+    },
+    "type": "object",
+    "required": [
+     "model",
+     "name",
+     "labels",
+     "device",
+     "dtype",
+     "prompt",
+     "max_state_tokens",
+     "calibration",
+     "auth",
+     "load",
+     "version",
+     "checks"
+    ],
+    "title": "Health",
+    "description": "The deployment: which checkpoint, where, with which wording — what your numbers came from."
+   },
+   "Load": {
+    "properties": {
+     "busy": {
+      "type": "boolean",
+      "title": "Busy",
+      "description": "Whether a request holds the model right now."
+     },
+     "waiting": {
+      "type": "integer",
+      "title": "Waiting",
+      "description": "Requests in line for it."
+     },
+     "queue": {
+      "type": "integer",
+      "title": "Queue",
+      "description": "How many may wait before the next gets 529."
+     },
+     "served": {
+      "type": "integer",
+      "title": "Served"
+     },
+     "avg_ms": {
+      "type": "number",
+      "title": "Avg Ms",
+      "description": "Exponential mean of a request's time on the model."
+     }
+    },
+    "type": "object",
+    "required": [
+     "busy",
+     "waiting",
+     "queue",
+     "served",
+     "avg_ms"
+    ],
+    "title": "Load"
+   },
+   "ModelMetadata": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name",
+      "description": "A name the request's `model` may carry.",
+      "examples": [
+       "typecastlm-qwen3.5-3.8b"
+      ]
+     },
+     "description": {
+      "type": "string",
+      "title": "Description"
+     },
+     "release_date": {
+      "type": "string",
+      "title": "Release Date",
+      "description": "YYYY-MM-DD.",
+      "examples": [
+       "2026-09-24"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "description",
+     "release_date"
+    ],
+    "title": "ModelMetadata"
+   },
+   "ModelMetadataList": {
+    "properties": {
+     "models": {
+      "items": {
+       "$ref": "#/components/schemas/ModelMetadata"
+      },
+      "type": "array",
+      "title": "Models"
+     }
+    },
+    "type": "object",
+    "required": [
+     "models"
+    ],
+    "title": "ModelMetadataList"
+   },
+   "NoulAnswer": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "noul",
+      "title": "Type"
+     },
+     "noul": {
+      "type": "number",
+      "title": "Noul",
+      "description": "Probability of yes, a softmax over the two answers that decide the question at the `verdict` temperature. The verdict is `noul >= 0.5`.",
+      "examples": [
+       0.98
+      ]
+     },
+     "logits": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Logits",
+      "description": "The raw outputs for true, false and unsure, before any temperature."
+     }
+    },
+    "type": "object",
+    "required": [
+     "type",
+     "noul",
+     "logits"
+    ],
+    "title": "NoulAnswer",
+    "description": "The probability of yes."
+   },
+   "NoulCriteria": {
+    "properties": {
+     "true": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "True",
+      "description": "What counts as a yes answer.",
+      "examples": [
+       "The message is unsolicited advertising."
+      ]
+     },
+     "false": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "False",
+      "description": "What counts as a no answer.",
+      "examples": [
+       "The message is a legitimate conversation."
+      ]
+     }
+    },
+    "additionalProperties": true,
+    "type": "object",
+    "title": "NoulCriteria",
+    "description": "What counts as a yes and what counts as a no."
+   },
+   "NoulQuestion": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "noul",
+      "title": "Type",
+      "description": "Identifies a yes/no question.",
+      "default": "noul"
+     },
+     "instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Instructions",
+      "description": "The yes/no question or statement to evaluate.",
+      "examples": [
+       "Is this message spam?"
+      ]
+     },
+     "criteria": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/NoulCriteria"
+       },
+       {
+        "additionalProperties": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "additionalProperties": true,
+           "type": "object"
+          },
+          {
+           "items": {},
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Criteria",
+      "description": "What a yes and a no mean — two of them. Left out, the wording shipped with the weights is used."
+     }
+    },
+    "type": "object",
+    "title": "NoulQuestion",
+    "description": "A yes/no question, answered with the probability of yes."
+   },
+   "ScoreAnswer": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "score",
+      "title": "Type"
+     },
+     "score": {
+      "type": "number",
+      "title": "Score",
+      "description": "Expected level: the probability-weighted mean of the positions, so it falls between levels.",
+      "examples": [
+       1.7
+      ]
+     },
+     "legend": {
+      "additionalProperties": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        {
+         "items": {},
+         "type": "array"
+        }
+       ]
+      },
+      "type": "object",
+      "title": "Legend",
+      "description": "Each position and the level it names."
+     },
+     "probabilities": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Probabilities",
+      "description": "Probability of each level, keyed by position; they sum to 1."
+     },
+     "confidence": {
+      "type": "number",
+      "title": "Confidence",
+      "description": "The probability of the leading level."
+     },
+     "marks": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "type": "object",
+      "title": "Marks",
+      "description": "Which mark each level was given."
+     },
+     "logits": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Logits"
+     }
+    },
+    "type": "object",
+    "required": [
+     "type",
+     "score",
+     "legend",
+     "probabilities",
+     "confidence",
+     "marks",
+     "logits"
+    ],
+    "title": "ScoreAnswer",
+    "description": "The expected level, and how likely each level was."
+   },
+   "ScoreQuestion": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "enum": [
+       "score",
+       "scale"
+      ],
+      "title": "Type",
+      "description": "Identifies a rating against ordered levels. `scale` is a synonym.",
+      "default": "score"
+     },
+     "instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Instructions",
+      "description": "What the model should rate.",
+      "examples": [
+       "How urgent is this message?"
+      ]
+     },
+     "criteria": {
+      "anyOf": [
+       {
+        "items": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "additionalProperties": true,
+           "type": "object"
+          },
+          {
+           "items": {},
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "type": "array"
+       },
+       {
+        "additionalProperties": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "additionalProperties": true,
+           "type": "object"
+          },
+          {
+           "items": {},
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "type": "object"
+       }
+      ],
+      "title": "Criteria",
+      "description": "Ordered descriptions of the levels; a list gives them positions 0, 1, 2… and those positions key the answer, a map keeps your keys. At least two; ten is the recommended limit and 36 the hard one.",
+      "examples": [
+       [
+        "Can wait",
+        "Needs attention this week",
+        "Needs attention today"
+       ]
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "criteria"
+    ],
+    "title": "ScoreQuestion",
+    "description": "A level on an ordinal rubric, with the expected level and a probability per level."
+   },
+   "SystemOneRequest": {
+    "properties": {
+     "state": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       }
+      ],
+      "title": "State",
+      "description": "The content all questions in this request refer to. An object or an array is read as JSON.",
+      "examples": [
+       "I was charged twice. Please help.",
+       {
+        "message": "Please help.",
+        "subject": "Duplicate charge"
+       }
+      ]
+     },
+     "questions": {
+      "additionalProperties": {
+       "oneOf": [
+        {
+         "$ref": "#/components/schemas/NoulQuestion"
+        },
+        {
+         "$ref": "#/components/schemas/TfuQuestion"
+        },
+        {
+         "$ref": "#/components/schemas/ChoiceQuestion"
+        },
+        {
+         "$ref": "#/components/schemas/ScoreQuestion"
+        }
+       ],
+       "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+         "choice": "#/components/schemas/ChoiceQuestion",
+         "noul": "#/components/schemas/NoulQuestion",
+         "scale": "#/components/schemas/ScoreQuestion",
+         "score": "#/components/schemas/ScoreQuestion",
+         "tfu": "#/components/schemas/TfuQuestion"
+        }
+       }
+      },
+      "type": "object",
+      "minProperties": 1,
+      "title": "Questions",
+      "description": "Questions to ask about the content, each under a name you choose. The response uses those names to identify the answers.",
+      "examples": [
+       {
+        "billing": {
+         "instructions": "Is this message about billing?",
+         "type": "noul"
+        }
+       }
+      ]
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model",
+      "description": "Accepted for compatibility and ignored: a process serves one checkpoint, and the answer names it. `GET /v1/models` lists the names.",
+      "examples": [
+       "typecastlm-latest"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "state",
+     "questions"
+    ],
+    "title": "SystemOneRequest",
+    "description": "Questions about one piece of material."
+   },
+   "SystemOneResponse": {
+    "properties": {
+     "model": {
+      "type": "string",
+      "title": "Model",
+      "description": "The checkpoint that answered, under its short name.",
+      "examples": [
+       "typecastlm-qwen3.5-3.8b"
+      ]
+     },
+     "answers": {
+      "additionalProperties": {
+       "oneOf": [
+        {
+         "$ref": "#/components/schemas/NoulAnswer"
+        },
+        {
+         "$ref": "#/components/schemas/TfuAnswer"
+        },
+        {
+         "$ref": "#/components/schemas/ChoiceAnswer"
+        },
+        {
+         "$ref": "#/components/schemas/ScoreAnswer"
+        }
+       ],
+       "discriminator": {
+        "propertyName": "type",
+        "mapping": {
+         "choice": "#/components/schemas/ChoiceAnswer",
+         "noul": "#/components/schemas/NoulAnswer",
+         "score": "#/components/schemas/ScoreAnswer",
+         "tfu": "#/components/schemas/TfuAnswer"
+        }
+       }
+      },
+      "type": "object",
+      "title": "Answers",
+      "description": "One answer per question, under the key you sent; its type matches the question's."
+     },
+     "usage": {
+      "$ref": "#/components/schemas/Usage"
+     },
+     "calibration": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Calibration",
+      "description": "The temperature per mode the probabilities were read at — `verdict`, `three_answers`, `choice`, `scale`, each `{\"temperature\": t}` — so `logits` can be re-read. May carry a `note`."
+     }
+    },
+    "type": "object",
+    "required": [
+     "model",
+     "answers",
+     "usage",
+     "calibration"
+    ],
+    "title": "SystemOneResponse",
+    "description": "Answers keyed by question name, with the model used and token usage."
+   },
+   "TfuAnswer": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "tfu",
+      "title": "Type"
+     },
+     "tfu": {
+      "type": "string",
+      "enum": [
+       "true",
+       "false",
+       "unsure"
+      ],
+      "title": "Tfu",
+      "description": "The leading answer."
+     },
+     "probabilities": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Probabilities",
+      "description": "Probability of each of the three answers at the `three_answers` temperature; they sum to 1."
+     },
+     "confidence": {
+      "type": "number",
+      "title": "Confidence",
+      "description": "The probability of the leading answer."
+     },
+     "logits": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "type": "object",
+      "title": "Logits"
+     }
+    },
+    "type": "object",
+    "required": [
+     "type",
+     "tfu",
+     "probabilities",
+     "confidence",
+     "logits"
+    ],
+    "title": "TfuAnswer",
+    "description": "One distribution over true, false and unsure."
+   },
+   "TfuQuestion": {
+    "properties": {
+     "type": {
+      "type": "string",
+      "const": "tfu",
+      "title": "Type",
+      "description": "Identifies a question read over true, false and unsure.",
+      "default": "tfu"
+     },
+     "instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Instructions",
+      "description": "The question to evaluate."
+     },
+     "criteria": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/NoulCriteria"
+       },
+       {
+        "additionalProperties": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "additionalProperties": true,
+           "type": "object"
+          },
+          {
+           "items": {},
+           "type": "array"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Criteria",
+      "description": "The same two criteria as `noul`; `unsure` is what is left when neither fits and is never written."
+     }
+    },
+    "type": "object",
+    "title": "TfuQuestion",
+    "description": "The same question as `noul`, read over three answers: true, false, unsure."
+   },
+   "Usage": {
+    "properties": {
+     "input_tokens": {
+      "type": "integer",
+      "title": "Input Tokens",
+      "description": "Tokens read, summed over the questions."
+     },
+     "output_tokens": {
+      "type": "integer",
+      "title": "Output Tokens",
+      "description": "Always 0: nothing is generated."
+     }
+    },
+    "type": "object",
+    "required": [
+     "input_tokens",
+     "output_tokens"
+    ],
+    "title": "Usage"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "ctx": {
+      "type": "object",
+      "title": "Context"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   }
+  },
+  "securitySchemes": {
+   "HTTPBearer": {
+    "type": "http",
+    "description": "The key the service was started with.",
+    "scheme": "bearer"
+   }
+  }
+ }
+}

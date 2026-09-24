@@ -5,11 +5,19 @@ code and the libraries at the versions the numbers were measured with; the weigh
 they arrive once, into a volume, and stay there across rebuilds.
 
 ```
+docker run -d --name typecastlm --gpus all -p 127.0.0.1:8000:8000 \
+    -v typecastlm-hf:/data/hf -e TYPECASTLM_API_KEY=… ghcr.io/mihail-gribov/typecastlm:latest
+curl localhost:8000/health
+```
+
+The image is published at `ghcr.io/mihail-gribov/typecastlm`, tagged with the package version
+(`1.2.0`) and `latest`. With the repository checked out, compose reads the settings from `.env`:
+
+```
 git clone https://github.com/mihail-gribov/typecastlm && cd typecastlm
 cp .env.example .env            # set TYPECASTLM_API_KEY at least
-docker compose up -d --build
+docker compose pull && docker compose up -d     # or: docker compose up -d --build
 docker compose logs -f          # "ready on 0.0.0.0:8000 as typecastlm-qwen3.5-3.8b …"
-curl localhost:8000/health
 ```
 
 The first start downloads the checkpoint (7.5 GB) and takes minutes; every later start takes
@@ -88,7 +96,7 @@ then reports `override: …` so a changed wording is visible rather than assumed
 | `POST /v1/systemone` | the questions; the Jev body, field for field — [API.md](API.md) |
 | `GET /v1/models` | the checkpoint under its name and the alias `typecastlm-latest` |
 | `GET /health` | model, device, dtype, prompt source, calibration, queue load; no key needed |
-| `GET /docs`, `/openapi.json` | the schema, as FastAPI renders it |
+| `GET /docs`, `/openapi.json` | the schema: every question and answer type, every error. The same file is committed as [openapi.json](openapi.json) |
 
 Every response carries `X-Request-Id` (yours if you sent one) and `X-Process-Time-Ms`, the whole
 request as the server saw it, queue included.
@@ -117,8 +125,8 @@ answers; until then it is `starting`, for up to ten minutes on a cold download.
 ## Updating
 
 ```
-git pull
-docker compose up -d --build        # the library layer is cached; the package layer rebuilds in seconds
+docker compose pull && docker compose up -d       # the published image
+git pull && docker compose up -d --build          # or rebuilt here; the library layer is cached
 ```
 
 The weights are in the `hf-cache` volume and are not touched by a rebuild. To change the pinned
@@ -126,7 +134,7 @@ libraries edit `docker/requirements.txt`, and rerun `tests/live_service.py` agai
 before shipping it: torch and transformers moving under a fixed checkpoint is how numbers change
 without anyone changing the model.
 
-## Without compose
+## Building the image yourself
 
 ```
 docker build -t typecastlm .
@@ -134,4 +142,5 @@ docker run -d --name typecastlm --gpus all -p 127.0.0.1:8000:8000 \
     -v typecastlm-hf:/data/hf -e TYPECASTLM_API_KEY=… typecastlm
 ```
 
-Drop `--gpus all` and add `-e TYPECASTLM_DEVICE=cpu` for a host without a GPU.
+Drop `--gpus all` and add `-e TYPECASTLM_DEVICE=cpu` for a host without a GPU. The published
+image is built the same way by `.github/workflows/docker.yml` on every release tag.

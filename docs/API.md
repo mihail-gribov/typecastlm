@@ -27,6 +27,10 @@ and its alias, and a request naming anything else is answered by it anyway.
              "description": "Alias of typecastlm-qwen3.5-3.8b, the one checkpoint this service holds."}]}
 ```
 
+`GET /openapi.json` is this contract as a schema — every question and answer type, every error
+— and `GET /docs` renders it; the same file is committed as [openapi.json](openapi.json) for a
+client generator or a reviewer who does not start the service.
+
 `GET /health`, with no key, reports the model, its labels, the device and dtype, the prompt in
 use, the state limit, the calibration and the queue, and is the place to check that a deployment
 is the one your numbers came from.

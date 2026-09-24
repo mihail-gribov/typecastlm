@@ -31,8 +31,6 @@ checkpoint's `calibration` on the body, and `/health` for the deployment itself.
 
 The whole contract is in `docs/API.md`.
 """
-from __future__ import annotations
-
 import argparse
 import datetime as _dt
 import json
@@ -476,33 +474,15 @@ class Gate:
                     "avg_ms": round(self.avg * 1000, 1)}
 
 
-def _request_model():
-    """The request body is declared at module level, not inside the factory.
-
-    The module has `from __future__ import annotations`, so annotations are strings and FastAPI
-    resolves them in the MODULE namespace. A class defined inside a function is invisible there,
-    and the request body silently becomes a query parameter: the server answers 422 to a
-    perfectly good POST.
-    """
-    from pydantic import BaseModel
-
-    class Ask(BaseModel):
-        # `state` is a string, an object or an array: the API this follows takes all three, and a
-        # third of the benchmark's own items send an object. A non-string is rendered as JSON.
-        state: str | dict | list
-        questions: dict
-        model: str | None = None
-
-    return Ask
-
-
 def _version() -> str:
     try:
         from importlib.metadata import version
 
         return version("typecastlm")
     except Exception:                            # a source tree that is not installed
-        return "0"
+        from . import __version__
+
+        return __version__
 
 
 def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
@@ -519,20 +499,31 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
     `/health` never asks for a key — it says nothing a caller could not learn from the model card,
     and an orchestrator has to be able to ask it.
     """
-    from fastapi import FastAPI, Header, HTTPException, Request
+    from fastapi import Depends, FastAPI, HTTPException, Request
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+    from .schema import (RESPONSES, Health, ModelMetadataList, SystemOneRequest,
+                         SystemOneResponse)
 
     keys = api_key.split(",") if isinstance(api_key, str) else list(api_key)
     keys = {k.strip() for k in keys if k and k.strip()}
     gate = Gate(queue)
 
-    Ask = _request_model()
-    globals()["Ask"] = Ask                     # so the string annotation resolves
-    app = FastAPI(title="typecastlm", version=_version(),
-                  description="A Jev-class decision model behind the Jev API. Send the key as "
-                              "`Authorization: Bearer <key>` when the service asks for one.")
+    app = FastAPI(
+        title="typecastlm", version=_version(),
+        description="A Jev-class decision model with open weights, behind the Jev API: ask the "
+                    "material a closed question, get a probability back. Send the key as "
+                    "`Authorization: Bearer <key>` when the service asks for one; `GET /health` "
+                    "never does. The reference with the reasoning behind each field is docs/API.md.",
+        license_info={"name": "Apache-2.0"})
 
-    def authorize(header: str) -> None:
-        if keys and header.removeprefix("Bearer ").strip() not in keys:
+    # A dependency rather than a check inside the handler: dependencies are solved before the
+    # body is validated, so a request without a key hears 401 whatever else is wrong with it,
+    # as it does from the API this copies — and the schema shows the lock.
+    bearer = HTTPBearer(auto_error=False, description="The key the service was started with.")
+
+    def authorize(cred: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
+        if keys and (cred is None or cred.credentials.strip() not in keys):
             raise HTTPException(401, "Missing or invalid API key. Check the `Authorization` "
                                      "header.")
 
@@ -553,7 +544,8 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
         response.headers["X-Process-Time-Ms"] = f"{(time.perf_counter() - t0) * 1000:.1f}"
         return response
 
-    @app.get("/health")
+    @app.get("/health", response_model=Health, tags=["deployment"],
+             summary="Which checkpoint, where, with which wording")
     def health() -> dict:
         return {"model": reader.name, "name": reader.served, "labels": reader.labels,
                 "device": str(reader.device), "dtype": str(next(reader.model.parameters()).dtype),
@@ -562,20 +554,28 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
                 "auth": bool(keys), "load": gate.load(), "version": app.version,
                 "checks": reader.check(strict=False) or "ok"}
 
-    @app.get("/v1/models")
-    def models(authorization: str = Header(default="")) -> dict:
-        authorize(authorization)
+    guarded = dict(dependencies=[Depends(authorize)], tags=["v1"])
+
+    @app.get("/v1/models", response_model=ModelMetadataList, responses={401: RESPONSES[401]},
+             summary="The checkpoint this service holds, and its alias", **guarded)
+    def models() -> dict:
         return {"models": reader.metadata()}
 
-    @app.post("/v1/systemone")
-    @app.post("/v1/typecast")                  # the name this service answered to in 1.0.0
-    def systemone(req: "Ask", authorization: str = Header(default="")) -> dict:
-        authorize(authorization)
-        if not req.questions:
-            raise refuse("no questions", "questions")
+    @app.post("/v1/systemone", response_model=SystemOneResponse, responses=RESPONSES,
+              summary="Answer questions about one piece of material", **guarded)
+    @app.post("/v1/typecast", response_model=SystemOneResponse, responses=RESPONSES,
+              summary="The same route under its 1.0.0 name", deprecated=True, **guarded)
+    def systemone(req: SystemOneRequest) -> dict:
+        """Answer one or more questions about the content supplied in `state`.
+
+        Question types may be mixed in one request. Answers come back under the names the
+        questions were sent under, each of the type its question has. Questions in one call
+        read the same state separately, so a bundle costs what the questions cost one by one.
+        """
+        questions = {k: q.model_dump() for k, q in req.questions.items()}
         try:
             with gate:
-                answers, tokens = reader.answer_many(req.state, req.questions)
+                answers, tokens = reader.answer_many(req.state, questions)
         except Busy as e:
             raise HTTPException(529, f"The service is at capacity ({gate.queue} waiting); "
                                      f"{e}.", headers={"Retry-After": str(e.wait)}) from e

@@ -218,3 +218,40 @@ def test_a_refused_question_carries_its_key():
     with pytest.raises(QuestionError) as e:
         r.answer_many("s", {"broken": "not an object"})
     assert e.value.key == "broken"
+
+
+def test_the_committed_schema_is_the_one_the_service_renders():
+    """docs/openapi.json is read by people and generators who never start the service, so it
+    must be what the service would say. Regenerate with scripts/export_openapi.py."""
+    pytest.importorskip("fastapi")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import export_openapi
+
+    want = json.dumps(export_openapi.schema(), indent=1, ensure_ascii=False) + "\n"
+    have = (ROOT / "docs" / "openapi.json").read_text(encoding="utf-8")
+    assert have == want, "docs/openapi.json is stale: run scripts/export_openapi.py"
+
+
+def test_the_request_schema_takes_what_the_api_it_copies_takes():
+    """A question of each type, in the loosest form the Jev API allows: object instructions, a
+    missing description, a bare yes/no question, `scale` for `score`."""
+    pytest.importorskip("pydantic")
+    from typecastlm.schema import SystemOneRequest
+
+    req = SystemOneRequest(state={"subject": "Duplicate charge"}, questions={
+        "spam": {"type": "noul", "instructions": "Is this spam?"},
+        "sure": {"type": "tfu", "instructions": {"task": "Is the claim supported?"},
+                 "criteria": {"true": "supported", "false": "contradicted"}},
+        "topic": {"type": "choice", "criteria": {"billing": None, "shipping": "delivery"}},
+        "mood": {"type": "scale", "instructions": "How angry?", "criteria": ["calm", "angry"]},
+    })
+    dumped = {k: q.model_dump() for k, q in req.questions.items()}
+    assert dumped["spam"] == {"type": "noul", "instructions": "Is this spam?", "criteria": None}
+    assert dumped["topic"]["criteria"] == {"billing": None, "shipping": "delivery"}
+    assert dumped["mood"]["type"] == "scale" and dumped["mood"]["criteria"] == ["calm", "angry"]
+    with pytest.raises(ValueError):
+        SystemOneRequest(state="x", questions={})                       # nothing to ask
+    with pytest.raises(ValueError):
+        SystemOneRequest(state="x", questions={"q": {"type": "guess"}})  # not a type
+    with pytest.raises(ValueError):
+        SystemOneRequest(state="x", questions={"q": {"type": "choice"}})  # options missing

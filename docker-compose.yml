@@ -1,14 +1,17 @@
 # The service on one GPU. Copy .env.example to .env, set the key, then:
 #
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d      # the published image
+#   docker compose up -d --build                     # or built here, from this checkout
 #   curl localhost:8000/health
 #
 # Needs nvidia-container-toolkit on the host (docs/DOCKER.md). Without a GPU, add the CPU file:
 #   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
 services:
   typecastlm:
+    # The published image; `docker compose pull` fetches it. `--build` builds the same thing
+    # from this checkout instead, under the same name.
+    image: ${IMAGE:-ghcr.io/mihail-gribov/typecastlm}:${IMAGE_TAG:-latest}
     build: .
-    image: typecastlm:${IMAGE_TAG:-latest}
     container_name: typecastlm
     restart: unless-stopped
     ports:

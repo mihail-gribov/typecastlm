@@ -24,6 +24,13 @@ The service grows into a deployment, and the rest of the Jev API arrives.
   that is wrong.
 - `X-Request-Id` and `X-Process-Time-Ms` on every response; `/health` reports dtype, version and
   the queue's load.
+- The contract as a schema: `typecastlm.schema` spells out every question and answer type,
+  the errors and the bearer scheme, so `/openapi.json` and `/docs` describe the service the way
+  the Jev schema describes Jev — until now they said `object`. The same file is committed as
+  `docs/openapi.json` (`scripts/export_openapi.py`, and a test that it is current).
+- The image is published: `ghcr.io/mihail-gribov/typecastlm`, tagged with the package version
+  and `latest`, built by `.github/workflows/docker.yml` on a release tag. The compose file pulls
+  it and keeps `--build` as the way to build the same thing here.
 
 **Changed**
 

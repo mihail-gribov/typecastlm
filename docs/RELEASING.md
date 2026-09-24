@@ -6,6 +6,7 @@ Two repositories are published, and they hold different things.
 |---|---|---|
 | this one | the package: client, service, reader, tests, docs | [PyPI](https://pypi.org/project/typecastlm/) and [GitHub](https://github.com/mihail-gribov/typecastlm) |
 | the model repository | the weights, and the few files that must sit beside them: the card, `reader.py`, `prompt.json` | [Hugging Face](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b) |
+| the image | the service with its libraries pinned, built from this repository by Actions on a release tag | [GHCR](https://github.com/mihail-gribov/typecastlm/pkgs/container/typecastlm) |
 
 Checked out side by side, which is what the scripts assume:
 
@@ -26,7 +27,23 @@ scripts/publish_pypi.sh test      # TestPyPI, for a rehearsal
 scripts/publish_pypi.sh           # PyPI — a version number there is taken forever
 ```
 
-Before either: the version in `pyproject.toml`, an entry in `CHANGELOG.md`, and `pytest`.
+Before either: the version in `pyproject.toml`, an entry in `CHANGELOG.md`, `pytest`, and
+`docs/openapi.json` regenerated with `scripts/export_openapi.py` if a route or a schema moved.
+
+## The image
+
+Nothing is pushed from a workstation: the image is 8 GB and a release tag builds it where the
+network is fast.
+
+```
+git tag v1.2.0 && git push origin main v1.2.0
+```
+
+`.github/workflows/docker.yml` then builds it and pushes `ghcr.io/mihail-gribov/typecastlm:1.2.0`
+and `:latest`. The tag is the package version with a `v`, so the image and the wheel with the
+same number are the same code. The first publication needs one manual step on GitHub: the
+package is private until its visibility is set to public in the package settings. Before
+tagging, the same image should have passed `tests/live_service.py` when built locally.
 
 ## The model repository
 

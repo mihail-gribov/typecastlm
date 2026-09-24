@@ -43,11 +43,10 @@ Why this one:
 There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
 newer, and four ways to arrange it, differing in where the model sits.
 
-**In a container** — the service with its libraries pinned and the weights in a volume:
+**In a container** — the published image, with its libraries pinned and the weights in a volume:
 
 ```
-git clone https://github.com/mihail-gribov/typecastlm && cd typecastlm
-docker compose up -d --build
+docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-hf:/data/hf ghcr.io/mihail-gribov/typecastlm
 export TYPECASTLM_ENDPOINT=http://localhost:8000
 ```
 
