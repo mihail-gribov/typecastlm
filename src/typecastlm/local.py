@@ -1,19 +1,22 @@
-"""Read this checkpoint in its four modes: `ask` returns the verdict and the third answer
-from one pass, `choice` and `scale` the other two. Requires `transformers` only.
+"""Read this checkpoint in its four modes, one call each. Requires `transformers` only.
 
-    ask(state, question, true, false)      -> {"p": {"yes","no"}, "p_unsure", "logits"}
+    noul(state, question, true, false)     -> {"p": {"yes","no"}, "logits"}
+    tfu(state, question, true, false)      -> {"p": {"true","false","unsure"}, "verdict", "logits"}
     choice(state, question, options)       -> {"p": {option: prob}, "logits", "marks"}
     scale(state, question, levels)         -> same, for an ordinal rubric
-    ask_many(state, questions)             -> one ask() result per question
+    noul_many(state, questions)            -> one noul() result per question
+
+The names are the API's, which are Jev's where Jev has the mode; `ask` and `ask_many` still work
+as the older names of `noul` and `noul_many`.
 
 Options are marked with letters, rubric levels with their own digits when those are single
 tokens, otherwise with `0..9A..P`. Marks above ten levels degrade. Probabilities use the
-per-mode temperature from `prompt.json`; `logits` are already divided by it.
+per-mode temperature from `prompt.json`; `logits` come back raw.
 
     from reader import Reader
     r = Reader("mihailgribov/typecastlm-qwen3.5-3.8b")
-    r.ask(state, "Is the claim supported?", true="the material supports it",
-          false="the material contradicts it")
+    r.noul(state, "Is the claim supported?", true="the material supports it",
+           false="the material contradicts it")
     r.choice(state, "Which rule applies?", [("a", "…"), ("b", "…")])
 """
 from __future__ import annotations
@@ -101,26 +104,38 @@ class Reader:
         return float((self.cal.get(mode) or {}).get("temperature", 1.0))
 
     def _verdict(self, z: list[float]) -> dict:
-        """Three raw logits to an answer. `p` uses the `verdict` temperature, `p_unsure` the
-        `three_answers` one; the two are fitted separately and are not interchangeable."""
+        """The two answers that decide the question, read against each other at the `verdict`
+        temperature. The third output takes no part in this softmax: it is fitted and calibrated
+        as its own mode, and mixing the two would read one of them at the other's temperature."""
         yes, no = (v / self._temp("verdict") for v in z[:2])
         m = max(yes, no)
         ey, en = math.exp(yes - m), math.exp(no - m)
-        t3 = self._temp("three_answers")
-        w = [v / t3 for v in z]
-        m3 = max(w)
-        e3 = [math.exp(v - m3) for v in w]
-        s3 = sum(e3)
-        return dict(logits=dict(zip(self.names[:3], z)),
-                    p={"yes": ey / (ey + en), "no": en / (ey + en)},
-                    p_unsure=e3[2] / s3)
+        return dict(p={"yes": ey / (ey + en), "no": en / (ey + en)},
+                    logits=dict(zip(self.names[:2], z[:2])))
+
+    def _ternary(self, z: list[float]) -> dict:
+        """All three answers in one distribution, at the `three_answers` temperature."""
+        w = [v / self._temp("three_answers") for v in z]
+        m = max(w)
+        e = [math.exp(v - m) for v in w]
+        s = sum(e)
+        p = dict(zip(self.names[:3], (v / s for v in e)))
+        return dict(p=p, verdict=max(p, key=p.get), logits=dict(zip(self.names[:3], z)))
+
+    def _read(self, state: str, question: str, true: str, false: str) -> list[float]:
+        h = self._last(self._text(self._fold(state), question, true, false))
+        return self.model.score(h.to(self.model.score.weight.dtype)).float()[:3].tolist()
 
     @torch.no_grad()
-    def ask(self, state: str, question: str, true: str, false: str) -> dict:
-        """One closed question. `p` is over yes/no; `p_unsure` is a separate signal to threshold."""
-        h = self._last(self._text(self._fold(state), question, true, false))
-        z = self.model.score(h.to(self.model.score.weight.dtype)).float()[:3].tolist()
-        return self._verdict(z)
+    def noul(self, state: str, question: str, true: str, false: str) -> dict:
+        """One closed question, answered over the two criteria. For the third answer call `tfu`."""
+        return self._verdict(self._read(state, question, true, false))
+
+    @torch.no_grad()
+    def tfu(self, state: str, question: str, true: str, false: str) -> dict:
+        """The same question over three answers: the two criteria and `unsure`, which is what is
+        left when neither fits. No third criterion is written for it."""
+        return self._ternary(self._read(state, question, true, false))
 
     @torch.no_grad()
     def _pick(self, state: str, question: str, options: list[tuple[str, str]], ask: str,
@@ -132,8 +147,8 @@ class Reader:
         h = self._last(self._chat(CHOICE_SYSTEM, body, "Answer: "))
         full = self.model.score(h.to(self.model.score.weight.dtype)).float()
         z = [float(full[self.col[f"mark_{m}"]]) for m in marks]
-        z = [v / self._temp("scale" if ordinal else "choice") for v in z]
-        e = [math.exp(v - max(z)) for v in z]
+        w = [v / self._temp("scale" if ordinal else "choice") for v in z]
+        e = [math.exp(v - max(w)) for v in w]
         s = sum(e)
         ids = [o[0] for o in options]
         return dict(p=dict(zip(ids, (v / s for v in e))), logits=dict(zip(ids, z)),
@@ -151,62 +166,17 @@ class Reader:
                else "Answer with the mark of the level that rates it.")
         return self._pick(state, question, levels, ask, ordinal=True)
 
-    @staticmethod
-    def _snapshot(cache) -> dict:
-        """Copy of the cache state after the prefix.
-
-        A hybrid trunk keeps two kinds of state: attention layers hold keys and values per token
-        and could be cropped; linear-attention layers hold a recurrent summary that cannot. Both
-        are restored from a copy instead.
-        """
-        return {name: [None if t is None else t.clone() for t in getattr(cache, name)]
-                for name in ("conv_states", "recurrent_states", "key_cache", "value_cache")}
-
-    @staticmethod
-    def _restore(cache, snap: dict) -> None:
-        for name, tensors in snap.items():
-            setattr(cache, name, [None if t is None else t.clone() for t in tensors])
-
     @torch.no_grad()
-    def ask_many(self, state: str, questions: list[tuple[str, str, str]]) -> list[dict]:
-        """Several `(question, true, false)` about one state. The shared prefix is computed once;
-        results equal calling `ask` separately. The split is taken in token space, not in text."""
+    def noul_many(self, state: str, questions: list[tuple[str, str, str]]) -> list[dict]:
+        """Several `(question, true, false)` about one state, one `noul` result each.
+
+        Sharing the prefix across a hybrid trunk is not implemented: restoring the recurrent state
+        of the linear-attention layers from a copy does not reproduce a clean pass, so the state
+        is read again per question and a bundle costs what the questions cost separately.
+        """
         state = self._fold(state)
-        fulls = [self.tok(self._text(state, q, t, f), add_special_tokens=False)["input_ids"]
-                 for q, t, f in questions]
-        n_min = min(len(f) for f in fulls)
-        n = 0
-        while n < n_min and len({f[n] for f in fulls}) == 1:
-            n += 1
-        # Sharing the prefix across a hybrid trunk is not implemented: restoring the recurrent
-        # state of the linear-attention layers from a copy does not reproduce a clean pass.
-        return [self.ask(state, q, t, f) for q, t, f in questions]
+        return [self.noul(state, q, t, f) for q, t, f in questions]
 
-        cache = self._cache()
-        dev = self.model.device
-        pre = torch.tensor([fulls[0][:n]], device=dev)
-        self.trunk(input_ids=pre, attention_mask=torch.ones_like(pre),
-                   past_key_values=cache, use_cache=True,
-                   cache_position=torch.arange(n, device=dev))
-        snap = self._snapshot(cache)
-        out = []
-        for full in fulls:
-            self._restore(cache, snap)
-            ids = torch.tensor([full[n:]], device=dev)
-            h = self.trunk(input_ids=ids, past_key_values=cache, use_cache=True,
-                           cache_position=torch.arange(n, len(full), device=dev),
-                           attention_mask=torch.ones(1, len(full), device=dev, dtype=torch.long))
-            z = self.model.score(h.last_hidden_state[0, -1].to(self.model.score.weight.dtype))
-            out.append(self._verdict(z.float()[:3].tolist()))
-        return out
-
-    def _cache(self):
-        """The cache class this trunk needs. A plain `DynamicCache` does not fit a hybrid one."""
-        from transformers import DynamicCache
-
-        mod = type(self.model).__module__
-        for name in ("Qwen3_5DynamicCache", "Qwen3NextDynamicCache"):
-            cls = getattr(__import__(mod, fromlist=[name]), name, None)
-            if cls is not None:
-                return cls(self.model.config.get_text_config())
-        return DynamicCache()
+    # The names these two carried in 1.0.0.
+    ask = noul
+    ask_many = noul_many

@@ -1,14 +1,15 @@
 """HTTP client: a question about a state, an answer in numbers.
 
-    noul(state, instructions, true, false)   -> Answer(prob, margin, unknown, logits, p)
+    noul(state, instructions, true, false)   -> Answer(prob, margin, logits)
     tfu(state, instructions, true, false)    -> Ternary(p, verdict, confidence, logits)
     choice(state, instructions, options)     -> Choice(p, verdict, confidence, logits)
     scale(state, instructions, levels)       -> Choice, for an ordinal rubric
     ask(state, questions)                    -> the service body, any number of questions
 
-`noul` matches the hosted service field for field. The rest are extensions: `unknown` is returned
-whether or not the question asks for it, `logits` are raw, and option names in `choice` and
-`scale` come back as the keys of `p`.
+`noul` matches the hosted service field for field: two answers, a softmax over the two, and
+nothing else in it. The third answer is a mode of its own, `tfu`, fitted and calibrated
+separately — reading it out of a `noul` call would mix two temperatures. `logits` are raw, and
+option names in `choice` and `scale` come back as the keys of `p`.
 
 The service holds the weights; this package depends on `requests` only.
 """
@@ -52,17 +53,18 @@ class Choice:
 
 @dataclass
 class Answer:
-    """What `noul` returns. `prob`, `margin`, `ms`, `input_tokens`, `model` are the service\'s
-    fields; `unknown`, `logits` and `p` are extensions."""
+    """What `noul` returns: the two answers that decide the question, read against each other.
+
+    `prob`, `margin`, `ms`, `input_tokens`, `model` are the service\'s fields; `logits` is the raw
+    payload. There is no third number here — ask `tfu` for that reading.
+    """
 
     prob: float
     margin: float
     ms: float
     input_tokens: int
     model: str
-    unknown: float = 0.0
     logits: dict[str, float] | None = None
-    p: dict[str, float] | None = None
 
 
 class Client:
@@ -159,10 +161,9 @@ class Client:
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
                       model=str(data.get("model", self.model)))
 
-    def _three(self, logits: dict, mode: str = "ternary") -> dict[str, float]:
-        """Three probabilities from three logits, calibrated for the mode asked for."""
-        key = {"ternary": "three_answers", "binary": "verdict"}.get(mode, mode)
-        v = {n: z / self._temp(key) for n, z in logits.items()}
+    def _three(self, logits: dict) -> dict[str, float]:
+        """Three probabilities from three logits, at the three-answer temperature."""
+        v = {n: z / self._temp("three_answers") for n, z in logits.items()}
         m = max(v.values())
         e = {n: math.exp(x - m) for n, x in v.items()}
         s = sum(e.values())
@@ -182,7 +183,7 @@ class Client:
         self.calibration = data.get("calibration", self.calibration)
         a = data["answers"]["q"]
         z = a["logits"]
-        p = self._three(z, "ternary")
+        p = self._three(z)
         lead = max(p, key=p.get)
         return Ternary(p=p, verdict=lead, confidence=p[lead], logits=z, ms=ms,
                        input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
@@ -209,19 +210,16 @@ class Client:
         a = data["answers"]["q"]
         z = a.get("logits")
         if z:
-            # From logits everything follows exactly: the margin is a difference, not the logarithm of
-            # a rounded probability, so on confident documents it does not hit a clamp.
-            names = list(z)
-            p3 = self._three(z, "binary")
-            decided = p3[names[0]] + p3[names[1]]
-            prob = p3[names[0]] / decided if decided > 0 else 0.5
+            # Two answers decide this question, so the softmax runs over those two and the third
+            # output takes no part in it. The margin is a difference of logits rather than the
+            # logarithm of a rounded probability, so a confident document does not hit a clamp.
+            names = list(z)[:2]
             margin = (z[names[0]] - z[names[1]]) / self._temp("verdict")
-            unknown = p3[names[2]] if len(names) > 2 else 0.0
+            prob = 1.0 / (1.0 + math.exp(-margin))
         else:                                   # the service sent a probability and nothing else
             prob = float(a["noul"])
             pc = min(max(prob, 1e-6), 1 - 1e-6)
-            margin, unknown, p3 = math.log(pc / (1 - pc)), float(a.get("unknown", 0.0)), None
+            margin = math.log(pc / (1 - pc))
         return Answer(prob=prob, margin=margin, ms=ms,
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
-                      model=str(data.get("model", self.model)),
-                      unknown=unknown, logits=z, p=p3)
+                      model=str(data.get("model", self.model)), logits=z)

@@ -47,7 +47,6 @@ def main(argv: list[str] | None = None) -> int:
         for row in rows:
             v = c.noul(row["text"], a.question, true=a.true, false=a.false)
             sink.write(json.dumps({"id": row["id"], "prob": round(v.prob, 4),
-                                   "unknown": round(v.unknown, 4),
                                    "margin": round(v.margin, 3)}, ensure_ascii=False) + "\n")
     finally:
         if a.out:

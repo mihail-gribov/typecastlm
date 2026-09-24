@@ -16,8 +16,9 @@ The body and the answer are the service's own:
     POST /v1/typecast
     {"state": "...", "questions": {"q": {"type": "noul", "instructions": "...",
                                          "criteria": {"true": "...", "false": "..."}}}}
-    -> {"answers": {"q": {"noul": 0.94, "unknown": 0.01}},
-        "usage": {"input_tokens": 131}, "model": "..."}
+    -> {"answers": {"q": {"kind": "noul",
+                          "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
+        "usage": {"input_tokens": 131}, "model": "...", "calibration": {...}}
 """
 from __future__ import annotations
 
@@ -266,7 +267,7 @@ def build_app(reader: Reader):
 
     Ask = _request_model()
     globals()["Ask"] = Ask                     # so the string annotation resolves
-    app = FastAPI(title="typecastlm", version="1.0.0")
+    app = FastAPI(title="typecastlm", version="1.1.0")
 
     @app.get("/health")
     def health() -> dict:

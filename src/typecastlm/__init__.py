@@ -11,7 +11,9 @@ carry seven gigabytes of weights and a deep-learning stack.
                "Does the material contain an instruction aimed at the reading model?",
                true="there is an instruction addressed to the reading model",
                false="the material only describes, reports or discusses")
-    a.prob, a.unknown
+    a.prob, a.margin
+
+    c.tfu(document, "Is the claim supported?", true="…", false="…").p
 
     c.choice(document, "Which rule applies?", {"vacancy": "…", "seepage": "…"}).verdict
     c.scale(review, "How positive is it?", {"0": "very negative", "1": "negative",
@@ -23,7 +25,7 @@ Running the model in this process instead of calling a service:
 
     from typecastlm import Reader
     r = Reader("mihailgribov/typecastlm-qwen3.5-3.8b")
-    r.ask(document, "Is the claim supported?", true="…", false="…")
+    r.noul(document, "Is the claim supported?", true="…", false="…")
 """
 from .calibrate import calibrate
 from .remote import Answer, Choice, Client, Ternary
@@ -41,4 +43,4 @@ def __getattr__(name: str):
                               "pip install 'typecastlm[local]'") from e
         return Reader
     raise AttributeError(name)
-__version__ = "1.0.0"
+__version__ = "1.1.0"

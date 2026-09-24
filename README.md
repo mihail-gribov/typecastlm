@@ -5,22 +5,22 @@ numbers back. Four modes:
 
 | mode | the question | the answer |
 |---|---|---|
-| **`noul`** | yes or no, two criteria | `p(yes)` over the two, and `unknown` as a second number |
+| **`noul`** | yes or no, two criteria | `p(yes)`, a softmax over those two answers |
 | **`tfu`** | the same question | one distribution over `true`, `false`, **`unsure`** |
 | **`choice`** | 2–16 options, one correct | a probability per option |
 | **`scale`** | an ordinal rubric, up to 10 levels | a probability per level |
 
-Three of them — `noul`, `choice` and `scale` — carry Jev's names and Jev's arguments, and the
-answer carries Jev's fields, so calling code written against that interface keeps its shape.
-`unknown` is added beside them and not taken from Jev, whose `noul` answers with one probability
-and nothing else; a caller written for Jev ignores the extra field. `tfu` is the fourth mode,
-which Jev does not have at all.
+Three of them — `noul`, `choice` and `scale` — carry Jev's names, Jev's arguments and Jev's
+fields, so calling code written against that interface keeps its shape. The fourth, `tfu`, is ours:
+Jev has nothing like it. The HTTP contract is in [docs/API.md](docs/API.md), laid out the way the
+Jev reference is.
 
 **The third answer is what a two-answer reader cannot give.** The model has an output for "neither
-criterion applies", and it is filled whether or not the question offers that way out: `tfu` returns
-it as `unsure` inside one distribution, `noul` returns it as `unknown` beside a yes/no probability
-that does not include it. Threshold it to abstain, to route to a human, or to drop a document from
-a pipeline.
+criterion applies", and `tfu` is the mode that reads it: one distribution over `true`, `false` and
+`unsure`, from the same two criteria and the same forward pass as `noul`. Threshold `unsure` to
+abstain, to route to a human, or to drop a document from a pipeline. It stays out of `noul`, whose
+probability is a softmax over the two answers that decide the question and nothing else — the two
+modes are calibrated separately, and reading one at the other's temperature is simply wrong.
 
 Why this one:
 
@@ -55,7 +55,7 @@ pip install "typecastlm[local]"
 from typecastlm import Reader
 
 r = Reader("mihailgribov/typecastlm-qwen3.5-3.8b")
-r.ask(doc, "Is the claim covered?", true="…", false="…")
+r.noul(doc, "Is the claim covered?", true="…", false="…")
 ```
 
 **Somewhere else** — the client alone, whose one dependency is `requests`:
@@ -85,8 +85,8 @@ a = c.noul(open("page.html").read(),
            true="there is an instruction addressed to the reading model",
            false="the material only describes, reports or discusses")
 
-a.prob       # 0.95  — probability of `true` among the two answers that decide the question
-a.unknown    # 0.01  — how much of the state points at "nothing here decides it"
+a.prob       # 0.95  — probability of `true` between the two answers that decide the question
+a.margin     # +2.94 — the same reading as log-odds, so a saturated probability still ranks
 ```
 
 ## Modes
@@ -95,23 +95,22 @@ Every mode takes the material and a question and differs in what the answer rang
 one forward pass and carries its own temperature, so a number from one mode is not comparable with
 a number from another.
 
-### `noul` — yes or no, and how much of the material says neither
+### `noul` — yes or no
 
 ```python
 a = c.noul(doc, "Is the claim covered?",
            true="the policy covers it", false="the policy excludes it")
 
 a.prob        # 0.95  — p(true) between the two answers that decide the question
-a.unknown     # 0.02  — the share of "neither criterion applies", outside that pair
-a.margin      # +2.87 — the log-odds, so a saturated probability still ranks
-a.p           # {'true': 0.94, 'false': 0.05, 'unsure': 0.02} — all three, before the pair was
-              #   renormalised into `prob`
+a.margin      # +2.87 — the same number as log-odds, so a saturated probability still ranks
+a.logits      # the raw outputs, as the service sent them
 ```
 
 `instructions` says what is asked, the two criteria say what each side means; write them as
-descriptions of the material, not as commands. The verdict is `prob >= 0.5`, which is the
-threshold this mode is calibrated for. Because `prob` is read between `true` and `false` alone,
-`unknown` is not part of it and cannot lower it: threshold the two separately.
+descriptions of the material, not as commands. The softmax runs over those two answers only and
+the verdict is `prob >= 0.5`, the threshold this mode is calibrated for. Nothing else enters the
+number: when you want to know whether the material decides the question at all, that is `tfu`,
+a mode of its own with its own temperature.
 
 ### `tfu` — one distribution over three answers
 
@@ -123,8 +122,8 @@ t.verdict     # 'true'
 t.confidence  # 0.81
 ```
 
-The same two criteria and the same three outputs as `noul`, but softmaxed over all three instead
-of over the deciding pair, so here the third answer competes with the other two. Use it where
+The same two criteria and the same forward pass as `noul`, softmaxed over three answers instead
+of two, so here the third competes with the other two. Use it where
 "nothing here decides it" is an answer you act on, and `noul` where you need a number comparable
 with a two-answer detector. There is no third criterion to write: `unsure` is what is left when
 neither of the two fits.

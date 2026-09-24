@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "typecastlm"
-version = "1.0.0"
+version = "1.1.0"
 description = "Client for a Jev-class decision model with open weights: the same noul, choice and score interface, plus a fourth mode that answers yes, no, or nothing here decides it"
 readme = "README.md"
 requires-python = ">=3.10"
