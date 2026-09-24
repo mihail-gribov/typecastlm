@@ -19,7 +19,10 @@ c.noul(doc, "Is the claim covered?", true="the policy covers it", false="it excl
 `EmbeddingReader` needs `requests` and nothing else: it builds the prompt from `prompt.json`,
 asks the server for the trunk's last hidden state, applies `head.json` and reads the logits at
 the mode's temperature. Both files come from the model directory when the GGUF sits beside the
-checkpoint, or from the Hub with a plain GET, cached under `~/.cache/typecastlm`. The `Client`
+checkpoint, or from the Hub with a plain GET, cached under `~/.cache/typecastlm`; a private
+repository is read with the token in `HF_TOKEN`. The files live in
+[mihailgribov/typecastlm-qwen3.5-3.8b-gguf](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b-gguf),
+which `model=` names. The `Client`
 on top is the same object with the same methods as against the service, so code written for one
 runs against the other.
 

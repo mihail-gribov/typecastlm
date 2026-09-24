@@ -77,7 +77,11 @@ class EmbeddingReader(Reading):
         cached = CACHE / self.name.replace("/", "--") / name
         if not cached.exists():
             cached.parent.mkdir(parents=True, exist_ok=True)
-            r = self._s.get(HUB.format(repo=self.name, file=name), timeout=self.timeout)
+            # A private repository needs the token; `HF_TOKEN` is where the Hub's own tools
+            # read it from, so a machine set up for them is set up for this.
+            tok = os.environ.get("HF_TOKEN", "")
+            r = self._s.get(HUB.format(repo=self.name, file=name), timeout=self.timeout,
+                            headers={"Authorization": f"Bearer {tok}"} if tok else {})
             if r.status_code != 200:
                 raise FileNotFoundError(f"{name}: not beside the model and not on the Hub for "
                                         f"{self.name} (HTTP {r.status_code}); pass it explicitly")
