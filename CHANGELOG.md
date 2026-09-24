@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+`NOTICE` only — no code changed. It still described the head as 29 rows, which it stopped being
+when the checkpoint was repacked to carry all 26 letters; a statement of what a derivative changed
+is the one file that has to be right. It now says 39 rows and 36 marks, and names where the
+wording and the temperatures live.
+
 ## 1.1.0
 
 `noul` was reading three logits where two decide the question, and the third at the wrong

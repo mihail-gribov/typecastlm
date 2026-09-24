@@ -348,7 +348,7 @@ def build_app(reader: Reader, api_key: str = ""):
 
     Ask = _request_model()
     globals()["Ask"] = Ask                     # so the string annotation resolves
-    app = FastAPI(title="typecastlm", version="1.1.0")
+    app = FastAPI(title="typecastlm", version="1.1.1")
 
     @app.get("/health")
     def health() -> dict:
