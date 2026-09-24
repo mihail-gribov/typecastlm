@@ -5,8 +5,15 @@ This product includes software developed as part of the AI Cordon research line.
 
 The model this package reads is derived from Qwen3.5-4B (Alibaba Cloud), released under the
 Apache License 2.0. The derivative keeps the first 28 transformer blocks of that model unchanged
-and adds a classification head of 29 rows: `true`, `false` and the answer marks are rows of the
-model's own output matrix, copied; `unsure` is a direction computed from 900 labelled rows of
-FEVER (CC BY-SA 3.0). No weight of the original is retrained or edited — there are no gradients in
-the making of it. Upper blocks are removed, which is why the derivative is smaller than the
-original and cannot generate text. Its own NOTICE states this in full.
+and adds a classification head of 39 rows: `true`, `false` and the 36 answer marks (`A`–`Z`,
+`0`–`9`) are rows of the model's own output matrix, copied; `unsure` is a direction computed from
+900 labelled rows of FEVER (CC BY-SA 3.0). No weight of the original is retrained or edited —
+there are no gradients in the making of it. Upper blocks are removed, which is why the derivative
+is smaller than the original and cannot generate text. Its own NOTICE states this in full.
+
+The wording the model is read with, and the temperatures its probabilities are divided by, ship
+with those weights in `prompt.json` rather than with this package: they were measured together and
+must not drift apart. Where this package carries copies — `docs/API.md` quotes the shape of the
+TypeSafe Jev API, which it follows so that callers of that interface can change one URL — those
+are descriptions of an interface, not code taken from it. This package is not affiliated with
+TypeSafe AI.
