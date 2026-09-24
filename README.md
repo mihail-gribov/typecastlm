@@ -172,15 +172,17 @@ c.ask(policy, {
     "settle":   {"type": "choice", "instructions": "How should it be settled?",
                  "criteria": {"deny": "…", "pay": "…"}},
 })
-# {"answers": {"covered": {"logits": {...}}, "settle": {"logits": {...}}}, "input_tokens": 1843}
+# {"answers": {"covered": {"type": "noul", "noul": 0.95, "logits": {...}},
+#               "settle":  {"type": "choice", "choice": "pay", "probabilities": {...}, …}},
+#  "input_tokens": 1843}
 ```
 
 Any mix of the four modes in one call, keyed by names you choose; `type` is `noul`, `tfu`,
-`choice` or `scale`, which the wire also spells `score`. Unlike the four methods above, this one
-hands back raw logits rather than a typed answer, so the softmax and the temperature of each mode
-are yours to apply. The state is currently read again for each question, so a bundle costs what
-the same questions cost one by one; sharing the prefix across a hybrid trunk is not implemented
-yet.
+`choice` or `score`, which this client also spells `scale`. Unlike the four methods above, this
+one hands back the service's answer objects as they came, so you read the fields yourself — see
+[docs/API.md](docs/API.md). The state is currently read again for each question, so a bundle costs
+what the same questions cost one by one; sharing the prefix across a hybrid trunk is not
+implemented yet.
 
 ## Numbers
 
@@ -222,24 +224,29 @@ they are.
 typecastlm-serve --model mihailgribov/typecastlm-qwen3.5-3.8b --port 8000
 ```
 
-It downloads the weights on first start, checks that the checkpoint fits the interface, and serves
-two routes:
+It downloads the weights on first start, checks that the checkpoint fits the interface, and
+answers the Jev API:
 
 ```
-curl localhost:8000/health
-curl localhost:8000/v1/typecast -H 'content-type: application/json' -d '{
+curl localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
   "state": "…the material…",
-  "questions": {"q": {"type": "noul", "instructions": "Is the claim covered?",
-                      "criteria": {"true": "…", "false": "…"}}}}'
-# {"answers": {"q": {"kind": "noul", "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
-#  "usage": {"input_tokens": 131}, "model": "…", "calibration": {...}}
+  "questions": {"is_urgent": {"type": "noul", "instructions": "Does this convey urgency?",
+                              "criteria": {"true": "explicitly time-sensitive",
+                                           "false": "no urgency expressed"}}}}'
+# {"model": "…", "answers": {"is_urgent": {"type": "noul", "noul": 0.95,
+#                                          "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
+#  "usage": {"input_tokens": 307, "output_tokens": 0}, "calibration": {...}}
 ```
 
-The service returns raw logits and computes no softmax, so the probabilities, the temperature and
-the mode stay with the caller and one answer can be read again at another temperature without
-asking anything twice. The prompt travels with the weights; `--prompt` replaces the wording the
-model was measured with, and `/health` reports which wording is in use so a changed one is visible
-rather than assumed.
+Route, request body, answer objects and error codes are that API's, field for field, so a client
+written against it reaches this service by changing the base URL. Added rather than changed: the
+question type `tfu`, `logits` on every answer, and `calibration` on the body — with those, an
+answer can be re-read at another temperature without asking anything twice. The whole contract is
+in [docs/API.md](docs/API.md).
+
+`--api-key` requires a bearer token; without it the service answers anyone who can reach the port.
+The prompt travels with the weights, `--prompt` replaces the wording the model was measured with,
+and `/health` reports which wording is in use so a changed one is visible rather than assumed.
 
 ## Using the model without any of this
 

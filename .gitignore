@@ -1,8 +1,12 @@
 __pycache__/
 *.pyc
-dist/
 build/
 *.egg-info/
 .venv/
-model/
 dist/
+uv.lock
+
+# The built checkpoint, wherever it is unpacked: weights do not
+# belong in git. model/ holds the texts that ship beside them.
+package_q35*/
+*.safetensors

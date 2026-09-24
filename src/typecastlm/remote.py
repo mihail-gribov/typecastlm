@@ -154,9 +154,12 @@ class Client:
         q = {"type": kind, "instructions": instructions, "criteria": dict(options)}
         data, ms = self._post({"state": state, "model": self.model, "questions": {"q": q}})
         self.calibration = data.get("calibration", self.calibration)
-        z = data["answers"]["q"]["logits"]
-        p = self._soft(z, "scale" if kind == "score" else "choice")
-        lead = max(p, key=p.get)
+        a = data["answers"]["q"]
+        z = a.get("logits")
+        # A service that sends finished probabilities and no logits — Jev itself, for one — is
+        # answered from those; the temperature has then already been applied by whoever fitted it.
+        p = self._soft(z, "scale" if kind == "score" else "choice") if z else a["probabilities"]
+        lead = a.get(kind) if a.get(kind) in p else max(p, key=p.get)
         return Choice(p=p, verdict=lead, confidence=p[lead], logits=z, ms=ms,
                       input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),
                       model=str(data.get("model", self.model)))
@@ -182,8 +185,8 @@ class Client:
         data, ms = self._post({"state": state, "model": self.model, "questions": {"q": q}})
         self.calibration = data.get("calibration", self.calibration)
         a = data["answers"]["q"]
-        z = a["logits"]
-        p = self._three(z)
+        z = a.get("logits")
+        p = self._three(z) if z else a["probabilities"]
         lead = max(p, key=p.get)
         return Ternary(p=p, verdict=lead, confidence=p[lead], logits=z, ms=ms,
                        input_tokens=int(data.get("usage", {}).get("input_tokens", 0)),

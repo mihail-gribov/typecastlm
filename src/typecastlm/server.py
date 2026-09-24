@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import os
 from pathlib import Path
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
@@ -114,7 +116,7 @@ class Reader:
 
         There is no third. A checkpoint without the file is an error, not an occasion to reach for
         a copy lying around: substituting a wording is exactly the kind of change that breaks
-        nothing and invalidates everything measured. `examples/prompt.json` is there to be copied
+        nothing and invalidates everything measured. `model/prompt.json` is there to be copied
         and passed on purpose, never picked up on its own.
         """
         if override:
@@ -131,7 +133,7 @@ class Reader:
             raise FileNotFoundError(
                 f"{model} ships no prompt.json ({type(e).__name__}), and there is no default to "
                 f"fall back on: the wording is part of what was measured. Pass one with "
-                f"--prompt (see examples/prompt.json in the typecastlm repository)") from e
+                f"--prompt (see model/prompt.json in the typecastlm repository)") from e
 
     def build(self, state: str, instructions: str, true: str, false: str) -> str:
         C = self.prompt_cfg
@@ -205,43 +207,79 @@ class Reader:
             out[key], tokens = ans, tokens + t
         return out, tokens
 
-    def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int]]:
-        """Prompt text, answer names, and the head outputs that carry them."""
-        kind = q.get("type", "noul")
-        kind = self.ALIASES.get(kind, kind)
+    def kind_of(self, q: dict) -> str:
+        kind = self.ALIASES.get(q.get("type", "noul"), q.get("type", "noul"))
         if kind not in self.KINDS:
-            raise ValueError(f"question type {kind!r} is not implemented; this service answers "
-                             f"{self.KINDS}")
+            raise ValueError(f"question type {q.get('type')!r} is not implemented; this service "
+                             f"answers {self.KINDS}")
+        return kind
+
+    def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int], dict]:
+        """Prompt text, answer names, the head outputs that carry them, and the legend.
+
+        `criteria` is a map of names to descriptions, and for `score` it may also be an ordered
+        list, which is the form the Jev API documents; a list is read as levels 0, 1, 2 and so on.
+        """
+        kind = self.kind_of(q)
         crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
         if kind in ("noul", "tfu"):
             if len(crit) != 2:
                 raise ValueError("a yes/no question takes exactly two criteria; the third answer "
                                  "is read without being asked for")
             t, f = list(crit.values())
-            return self.build(state, q["instructions"], t, f), list(self.EXPECTED), [0, 1, 2]
+            return self.build(state, q["instructions"], t, f), list(self.EXPECTED), [0, 1, 2], {}
+        if isinstance(crit, (list, tuple)):
+            crit = {str(i): d for i, d in enumerate(crit)}
         if len(crit) < 2:
             raise ValueError(f"a {kind} question takes at least two options")
         options = list(crit.items())
         marks = self.marks_for([k for k, _ in options], ordinal=(kind == "score"))
         text = self.build_marks(state, q["instructions"], options, marks,
                                 ordinal=(kind == "score"))
-        return text, [k for k, _ in options], [self.marks[m] for m in marks]
+        return (text, [k for k, _ in options], [self.marks[m] for m in marks], dict(options))
+
+    def _soft(self, logits: dict, mode: str) -> dict:
+        v = {k: z / self.temp(mode) for k, z in logits.items()}
+        m = max(v.values())
+        e = {k: math.exp(x - m) for k, x in v.items()}
+        s = sum(e.values())
+        return {k: x / s for k, x in e.items()}
+
+    def temp(self, mode: str) -> float:
+        return float((self.prompt_cfg.get("calibration", {}).get(mode) or {})
+                     .get("temperature", 1.0))
+
+    def read(self, kind: str, logits: dict, legend: dict) -> dict:
+        """Logits to the answer body of this question type.
+
+        The shape is the Jev API's, field for field, so a caller written against it needs only
+        another base URL. `logits` ride along beside it, because a reading is reproducible from
+        them at any temperature while a finished probability is not.
+        """
+        if kind == "noul":
+            two = {k: logits[k] for k in list(logits)[:2]}
+            return {"type": "noul", "noul": self._soft(two, "verdict")[list(two)[0]]}
+        mode = {"tfu": "three_answers", "choice": "choice", "score": "scale"}[kind]
+        p = self._soft(logits, mode)
+        lead = max(p, key=p.get)
+        if kind == "score":
+            score = sum(i * p[k] for i, k in enumerate(p))
+            return {"type": "score", "score": score, "legend": legend,
+                    "probabilities": p, "confidence": p[lead]}
+        if kind == "choice":
+            return {"type": "choice", "choice": lead, "probabilities": p, "confidence": p[lead]}
+        return {"type": "tfu", "tfu": lead, "probabilities": p, "confidence": p[lead]}
 
     def answer(self, state: str, q: dict) -> tuple[dict, int]:
         """One question. Shares `prepare` with the bundle path."""
-        text, keys, wanted = self.prepare(state, q)
+        text, keys, wanted, legend = self.prepare(state, q)
         enc = self.tok([text], return_tensors="pt", add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
             z = self.model(**enc).logits[0].float().cpu()
-        # Raw logits, only those the question uses. The softmax, its temperature and the mode
-        # belong to the caller.
-        return ({"kind": q.get("type", "noul"),
-                 "logits": {k: float(z[i]) for k, i in zip(keys, wanted)}},
-                int(enc["attention_mask"].sum()))
-
-
-def q_kind(q: dict) -> str:
-    return q.get("type", "noul")
+        logits = {k: float(z[i]) for k, i in zip(keys, wanted)}
+        out = self.read(self.kind_of(q), logits, legend)
+        out["logits"] = logits
+        return out, int(enc["attention_mask"].sum())
 
 
 def _request_model():
@@ -262,8 +300,15 @@ def _request_model():
     return Ask
 
 
-def build_app(reader: Reader):
-    from fastapi import FastAPI, HTTPException
+def build_app(reader: Reader, api_key: str = ""):
+    """The Jev API, served from your own weights.
+
+    The routes, the request body, the answer objects and the error codes are that API's; a client
+    written against it reaches this service by changing the base URL. What is added rather than
+    changed: the question type `tfu`, a `logits` field on every answer, and the checkpoint's
+    `calibration` on the body.
+    """
+    from fastapi import FastAPI, Header, HTTPException
 
     Ask = _request_model()
     globals()["Ask"] = Ask                     # so the string annotation resolves
@@ -274,20 +319,25 @@ def build_app(reader: Reader):
         return {"model": reader.name, "labels": reader.labels, "device": str(reader.device),
                 "prompt": reader.prompt_source, "max_state_tokens": reader.max_state_tokens,
                 "calibration": reader.prompt_cfg.get("calibration", {}),
-                "checks": reader.check(strict=False) or "ok"}
+                "auth": bool(api_key), "checks": reader.check(strict=False) or "ok"}
 
-    @app.post("/v1/typecast")
-    def typecast(req: "Ask") -> dict:
+    @app.post("/v1/systemone")
+    @app.post("/v1/typecast")                  # the name this service answered to in 1.0.0
+    def systemone(req: "Ask", authorization: str = Header(default="")) -> dict:
+        if api_key and authorization.removeprefix("Bearer ").strip() != api_key:
+            raise HTTPException(401, "Missing or invalid API key. Check the `Authorization` "
+                                     "header.")
         if not req.questions:
-            raise HTTPException(400, "no questions")
+            raise HTTPException(422, "no questions")
         try:
             answers, tokens = reader.answer_many(req.state, req.questions)
         except ValueError as e:
-            raise HTTPException(400, str(e)) from e
-        # The body is exactly the service's: `answers`, `usage`, `model`. Timing is the client's
-        # business — an extra field here would be ours rather than shared.
-        # The calibration rides along: it belongs to the checkpoint, and a client should not guess it.
-        return {"answers": answers, "usage": {"input_tokens": tokens}, "model": reader.name,
+            raise HTTPException(422, str(e)) from e
+        # `model`, `answers` and `usage` are the Jev body. `calibration` is ours: it belongs to the
+        # checkpoint, and a client should not have to guess the temperature its numbers were read
+        # at. Nothing is generated here, so `output_tokens` is zero and stays zero.
+        return {"model": reader.name, "answers": answers,
+                "usage": {"input_tokens": tokens, "output_tokens": 0},
                 "calibration": reader.prompt_cfg.get("calibration", {})}
 
     return app
@@ -306,6 +356,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="your own template instead of the one shipped with the weights (same fields)")
     ap.add_argument("--no-strict", action="store_true",
                     help="serve a mismatched checkpoint anyway — for debugging only")
+    ap.add_argument("--api-key", default=os.environ.get("TYPECASTLM_API_KEY", ""),
+                    help="require this bearer token; without it the service answers anyone "
+                         "who can reach the port")
     a = ap.parse_args(argv)
 
     import uvicorn
@@ -317,7 +370,8 @@ def main(argv: list[str] | None = None) -> int:
           flush=True)
     print(f"checks: {reader.check(strict=False) or 'ok'}", flush=True)
     print(f"ready on {a.host}:{a.port}; labels {reader.labels}; device {reader.device}", flush=True)
-    uvicorn.run(build_app(reader), host=a.host, port=a.port, log_level="info")
+    uvicorn.run(build_app(reader, api_key=a.api_key), host=a.host, port=a.port,
+                log_level="info")
     return 0
 
 

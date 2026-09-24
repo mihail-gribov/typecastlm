@@ -1,17 +1,19 @@
 # API reference
 
-The service answers questions about one state. It follows the shape of the Jev API — same
-endpoint layout, same request body, same question types under the same names — with one question
-type added, `tfu`, and one deliberate difference in the answer: this service returns logits and
-the calibration rather than finished probabilities.
+The service answers questions about one state. The route, the request body, the answer objects
+and the error codes are the Jev API's, field for field, so a client written against it reaches
+this service by changing the base URL. Three things are added and nothing is changed: the question
+type `tfu`, a `logits` field on every answer, and the checkpoint's `calibration` on the body.
 
 ## Evaluation endpoint
 
 ```
-POST http://<host>:<port>/v1/typecast
+POST http://<host>:<port>/v1/systemone
 Content-Type: application/json
-Authorization: Bearer <key>        # only if your deployment adds auth; typecastlm-serve has none
+Authorization: Bearer <key>        # required when the service was started with --api-key
 ```
+
+`/v1/typecast` is the same route under the name this service answered to in 1.0.0.
 
 `GET /health` reports the model, its labels, the device, the prompt in use, the state limit and
 the calibration, and is the place to check that a deployment is the one your numbers came from.
@@ -23,6 +25,8 @@ the calibration, and is the place to check that a deployment is the one your num
 | `state` | string | required — the material every question is asked about |
 | `questions` | object | required — a map of your keys to question objects; answers come back under the same keys |
 | `model` | string | optional and ignored — a process serves one checkpoint, and the answer names it |
+
+Answers come back under your keys, in one body, however many questions the call carries.
 
 A state longer than `max_state_tokens` (32768 for this checkpoint) is not refused: the middle is
 dropped and the two halves are kept with ` […] ` between them, because a question about a
@@ -70,66 +74,100 @@ order among them. Sixteen is where this checkpoint's marks end; Jev takes up to 
 
 ### `score` — a level on an ordinal rubric
 
-`criteria` is a map of levels to descriptions, in order, at least two. Ten is the documented
-limit, Jev's as well: the checkpoint carries marks for more and the service will accept them, but
-the reading degrades past ten. `scale` is accepted as a synonym of `score`.
+`criteria` is an ordered list of levels, at least two of them. Ten is the documented limit, Jev's
+as well: the checkpoint carries marks for more and the service will accept them, but the reading
+degrades past ten. `scale` is accepted as a synonym of `score`.
 
 ```json
 {"type": "score",
- "instructions": "How positive is this review overall?",
- "criteria": {"0": "very negative", "1": "negative", "2": "neutral",
-              "3": "positive", "4": "very positive"}}
+ "instructions": "How frustrated is the customer?",
+ "criteria": ["Calm", "Frustrated", "Very angry"]}
 ```
+
+A list gives the levels the positions `0`, `1`, `2`… and those positions key the answer. A map is
+accepted too, and then its keys are the ones that come back — useful when the levels already have
+names in your code.
 
 ## Response body
 
 ```json
-{"answers": {"covered": {"kind": "noul",
-                         "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
- "usage": {"input_tokens": 131},
- "model": "typecastlm-qwen3.5-3.8b",
+{"model": "typecastlm-qwen3.5-3.8b",
+ "answers": {"is_urgent": {"type": "noul", "noul": 0.95,
+                           "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}},
+ "usage": {"input_tokens": 307, "output_tokens": 0},
  "calibration": {"verdict": {"temperature": 1.3}, "three_answers": {"temperature": 2.85},
                  "choice": {"temperature": 1.75}, "scale": {"temperature": 3.9}}}
 ```
 
 | field | |
 |---|---|
-| `answers` | one entry per question, under the key you sent |
-| `usage.input_tokens` | tokens read, summed over the questions in the call |
 | `model` | the checkpoint that answered |
-| `calibration` | the temperature per mode, shipped with the weights; it belongs to the checkpoint, so a client does not have to guess it |
+| `answers` | one object per question, under the key you sent |
+| `usage.input_tokens` | tokens read, summed over the questions in the call |
+| `usage.output_tokens` | always 0 — nothing is generated |
+| `calibration` | added here: the temperature per mode, so a caller reading `logits` does not have to guess the one the probabilities were read at |
 
 Questions in one call are answered against the same state but read it separately, so a bundle
 costs what the questions cost one by one.
 
 ## Answer types
 
-Every answer carries `kind`, echoing the question type, and `logits`, one raw number per answer.
-Probabilities are the caller's: divide by the mode's temperature and softmax over the answers that
-mode uses. Which answers those are is the whole difference between `noul` and `tfu`.
+Every answer carries `type`, the probabilities its mode is read at, and `logits` — the raw head
+outputs the question used, which no other field lets you recover.
 
-| kind | logits | how to read them |
-|---|---|---|
-| `noul` | `true`, `false`, `unsure` | softmax over `true` and `false` at the `verdict` temperature; `unsure` takes no part |
-| `tfu` | `true`, `false`, `unsure` | softmax over all three at the `three_answers` temperature |
-| `choice` | one per option | softmax over the options at the `choice` temperature |
-| `score` | one per level | softmax over the levels at the `scale` temperature |
+### `noul`
 
-`noul` and `tfu` read the same three logits and differ only in what the softmax runs over, so one
-call of either can be re-read as the other — but not with the other's temperature, which is fitted
-for its own mode.
+```json
+{"type": "noul", "noul": 0.95, "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}
+```
 
-Returning logits rather than probabilities is what lets an answer be read twice without asking
-twice, and what keeps the temperature visible instead of baked in. A client that wants Jev's
-shape — `{"noul": 0.94}` — computes it in one line from `logits`.
+`noul` is the probability of the `true` criterion, a softmax over `true` and `false` at the
+`verdict` temperature. The third output is in `logits` and takes no part in the number.
+
+### `tfu`
+
+```json
+{"type": "tfu", "tfu": "unsure",
+ "probabilities": {"true": 0.21, "false": 0.16, "unsure": 0.63}, "confidence": 0.63,
+ "logits": {"true": 3.1, "false": -0.4, "unsure": -2.2}}
+```
+
+The same three logits read as one distribution at the `three_answers` temperature. `tfu` names the
+leading answer and `confidence` is its probability. The two modes are fitted separately, so one
+call can be re-read as the other only at that other mode's temperature.
+
+### `choice`
+
+```json
+{"type": "choice", "choice": "billing",
+ "probabilities": {"billing": 0.88, "technical": 0.12, "sales": 0.0}, "confidence": 0.81,
+ "logits": {"billing": 4.1, "technical": 1.9, "sales": -3.0}}
+```
+
+Keys are your option names throughout; inside they are marked `A`, `B`, `C`… and the marks do not
+appear in the answer.
+
+### `score`
+
+```json
+{"type": "score", "score": 1.05,
+ "legend": {"0": "Calm", "1": "Frustrated", "2": "Very angry"},
+ "probabilities": {"0": 0.0, "1": 0.95, "2": 0.05}, "confidence": 0.92,
+ "logits": {"0": -3.0, "1": 4.0, "2": 1.0}}
+```
+
+`score` is the mean level, `sum(i * p(i))` over the levels in the order you gave them, so it lies
+between 0 and one less than the number of levels and lands between levels: 1.05 is just past
+`Frustrated`. `legend` says what each position means, which is what makes that number readable.
 
 ## Errors
 
 | status | when |
 |---|---|
-| 400 | no questions; an unknown `type`; a yes/no question without exactly two criteria; a `choice` or `score` with fewer than two options; more options than the checkpoint has marks |
-| 422 | a body that is not the shape above |
-| 500 | the model failed to answer |
+| `401 Unauthorized` | the service was started with `--api-key` and the `Authorization` header does not carry it |
+| `422 Unprocessable Entity` | no questions; an unknown `type`; a yes/no question without exactly two criteria; a `choice` or `score` with fewer than two options; more options than the checkpoint has marks; a body that is not the shape above |
+| `500` | the model failed to answer |
 
-408, 429, 500, 502, 503, 504 and 529 are the codes the bundled client retries, with exponential
-back-off and the `Retry-After` header honoured when one is sent.
+A service of your own has no rate limit, so `429` and `529` do not arise here; the bundled client
+retries them anyway, along with 408, 500, 502, 503 and 504, with exponential back-off and the
+`Retry-After` header honoured when one is sent.

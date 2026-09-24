@@ -13,26 +13,18 @@
  "base": "Qwen/Qwen3.5-4B",
  "cut_layer": 27,
  "calibration": {
-  "note": "One temperature per mode, each fitted by minimising calibration error on a public set of ours — never on a benchmark we report. A temperature never changes the answer: it only makes the probability mean what it says. It does NOT transfer between distributions: it corrects the mismatch between confidence and the difficulty of the data, so refit it on two hundred labelled rows of your own.",
+  "note": "Temperature per mode, applied when turning logits into probabilities. It changes no answer. Refit on your own labelled rows if your pool differs.",
   "verdict": {
-   "temperature": 1.3,
-   "fitted_on": "FEVER dev, 2000 decidable rows",
-   "effect": "calibration error 0.032 -> 0.011"
+   "temperature": 1.3
   },
   "three_answers": {
-   "temperature": 2.85,
-   "fitted_on": "FEVER dev, 3000 rows, a third of them undecidable",
-   "effect": "calibration error 0.236 -> 0.052"
+   "temperature": 2.85
   },
   "choice": {
-   "temperature": 1.75,
-   "fitted_on": "ARC-Challenge, 400 questions of four options",
-   "effect": "calibration error 0.070 -> 0.030"
+   "temperature": 1.75
   },
   "scale": {
-   "temperature": 3.9,
-   "fitted_on": "SST-5, 400 reviews on five levels",
-   "effect": "calibration error 0.329 -> 0.016"
+   "temperature": 3.9
   }
  }
 }
