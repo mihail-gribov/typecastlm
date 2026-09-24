@@ -163,7 +163,7 @@ class Reader:
 
     KINDS = ("noul", "tfu", "choice", "score")
     ALIASES = {"scale": "score"}   # the client calls it `scale`, the wire has always said `score`
-    CHOICE_SYSTEM = "You answer with exactly one character from the given list."
+    CHOICE_SYSTEM = "You answer with exactly one letter from the given list."
     LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     ORDINAL = "0123456789" + LETTERS
 
