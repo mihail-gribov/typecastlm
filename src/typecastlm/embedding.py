@@ -12,11 +12,15 @@ head comes from `head.json` beside it, and the answers are the service's, field 
     c = Client(transport=EmbeddingReader("http://127.0.0.1:8080"))
     c.noul(doc, "Is the claim covered?", true="…", false="…").prob
 
-Two things the launcher has to do, and both are checked at start: pool the last token (the GGUF
+Two things the server has to do, and both are checked at start: pool the last token (the GGUF
 says so in its metadata, `--pooling last` says so on the command line) and hand the vector over
-unnormalised — the native `/embedding` route does when asked with `embd_normalize: -1`; the
-OpenAI-style `/v1/embeddings` always normalises, and a normalised vector keeps the winner and
-loses the probabilities. Ollama normalises too, which is why it is not a backend here.
+unnormalised. Two routes are known. llama-server's native `/embedding` does so when asked with
+`embd_normalize: -1`, and is tried first. The OpenAI-style `/v1/embeddings` is what every other
+server speaks — vLLM, TEI, and llama-server itself — and is used when the native route is not
+there; whether it normalises is the server's setting (vLLM: `--override-pooler-config
+'{"pooling_type": "LAST", "normalize": false}'`; llama-server's always does), and a unit vector
+is refused at start, because it keeps the winner and loses the probabilities. Ollama normalises
+with no setting to turn it off, which is why it is not a backend here.
 """
 import os
 import time
@@ -43,15 +47,27 @@ class EmbeddingReader(Reading):
     def __init__(self, endpoint: str = DEFAULT_ENDPOINT, model: str = DEFAULT_MODEL,
                  head: str | Path | None = None, prompt: str | Path | None = None,
                  max_state_tokens: int | None = None, timeout: float = 300.0,
-                 check: bool = True):
+                 check: bool = True, api: str = "auto", api_key: str = "",
+                 served_model: str = ""):
+        """`api` is the route the server speaks: `llama` (the native `/embedding`), `openai`
+        (`/v1/embeddings`), or `auto`, which takes the native one when the server has it.
+        `api_key` goes in the `Authorization` header when the server asks for one, and
+        `served_model` is the name the OpenAI route wants in `model` — llama-server ignores it,
+        vLLM answers only to the name it was started with."""
         import json
 
         import requests
 
+        if api not in ("auto", "llama", "openai"):
+            raise ValueError(f"api is auto, llama or openai, not {api!r}")
         self.endpoint, self.name = endpoint.rstrip("/"), model
         self.served = model.rstrip("/").split("/")[-1] or model
-        self.timeout = timeout
+        self.served_model = served_model or self.served
+        self.timeout, self.api = timeout, api
         self._s = requests.Session()
+        if api_key:
+            self._s.headers["Authorization"] = f"Bearer {api_key}"
+        self._can_tokenize: bool | None = None   # learned on first use
         self.prompt_cfg = json.loads(Path(self._file("prompt.json", prompt)).read_text("utf-8"))
         head_cfg = json.loads(Path(self._file("head.json", head)).read_text("utf-8"))
         self.rows: dict[str, list[list[float]]] = head_cfg["rows"]
@@ -90,14 +106,24 @@ class EmbeddingReader(Reading):
 
     # -- the launcher -------------------------------------------------------------------------
 
-    def _post(self, route: str, body: dict) -> dict | list:
+    def _post(self, route: str, body: dict, missing_ok: bool = False):
         r = self._s.post(f"{self.endpoint}{route}", json=body, timeout=self.timeout)
+        if r.status_code == 404 and missing_ok:
+            return None
         if r.status_code != 200:
             raise RuntimeError(f"{route}: HTTP {r.status_code}: {r.text[:200]}")
         return r.json()
 
-    def tokenize(self, text: str) -> list[int]:
-        got = self._post("/tokenize", {"content": text, "add_special": False})
+    def tokenize(self, text: str) -> list[int] | None:
+        """Token ids from the server's own tokenizer, or None where the route does not exist
+        (the OpenAI API has no tokenizer): the fold is then done by characters and the token
+        count taken from the answer's `usage`."""
+        if self._can_tokenize is False:
+            return None
+        got = self._post("/tokenize", {"content": text, "add_special": False}, missing_ok=True)
+        self._can_tokenize = got is not None
+        if got is None:
+            return None
         return got["tokens"] if isinstance(got, dict) else got
 
     def detokenize(self, ids: list[int]) -> str:
@@ -106,13 +132,28 @@ class EmbeddingReader(Reading):
 
     def vector(self, text: str) -> list[float]:
         """The trunk's last hidden state for this text, unnormalised."""
-        got = self._post("/embedding", {"content": text, "embd_normalize": -1})
-        v = _floats(got)
+        v, self._tokens = self._embed(text)
         if v is None or len(v) != self.hidden:
-            raise RuntimeError(f"/embedding answered {type(got).__name__} without a vector of "
-                               f"{self.hidden} floats; is the server started with --embeddings "
-                               "and last-token pooling?")
+            raise RuntimeError(f"the server answered without a vector of {self.hidden} floats; "
+                               "is it started with --embeddings and last-token pooling?")
         return v
+
+    def _embed(self, text: str) -> tuple[list[float] | None, int | None]:
+        """The vector and, when the route reports it, the tokens read. The native route is
+        tried first under `auto` and remembered either way."""
+        if self.api != "openai":
+            got = self._post("/embedding", {"content": text, "embd_normalize": -1},
+                             missing_ok=(self.api == "auto"))
+            if got is not None:
+                self.api = "llama"
+                return _floats(got), None
+            self.api = "openai"
+        got = self._post("/v1/embeddings", {"model": self.served_model, "input": text,
+                                            "encoding_format": "float"})
+        data = got.get("data") if isinstance(got, dict) else None
+        usage = (got.get("usage") or {}) if isinstance(got, dict) else {}
+        v = _floats(data[0]) if data else _floats(got)
+        return v, (int(usage["prompt_tokens"]) if "prompt_tokens" in usage else None)
 
     def check(self) -> None:
         """Is this server the trunk, read the right way? A normalised vector has length one and
@@ -121,16 +162,27 @@ class EmbeddingReader(Reading):
         v = self.vector("check")
         n = sum(x * x for x in v) ** 0.5
         if abs(n - 1.0) < 1e-3:
-            raise RuntimeError("the server returns unit vectors: it normalises embeddings, and "
-                               "the head cannot be applied to a normalised vector — use "
-                               "llama-server's native /embedding route")
+            hint = ("llama-server: start it so the native /embedding route is there"
+                    if self.api == "openai" else "check the server's pooling and normalisation")
+            raise RuntimeError(f"the server returns unit vectors over its {self.api} route: it "
+                               "normalises embeddings, and the head cannot be applied to a "
+                               f"normalised vector — {hint}; vLLM takes "
+                               "--override-pooler-config '{\"pooling_type\": \"LAST\", "
+                               "\"normalize\": false}'")
 
     # -- what Reading asks for ------------------------------------------------------------------
+
+    CHARS_PER_TOKEN = 3          # a cautious ratio for the fold when no tokenizer route exists
 
     def fold(self, state: str) -> str:
         if len(state) <= self.max_state_tokens:     # a token is at least one character
             return state
         ids = self.tokenize(state)
+        if ids is None:                              # no tokenizer over this API: by characters
+            keep = self.max_state_tokens * self.CHARS_PER_TOKEN
+            if len(state) <= keep:
+                return state
+            return state[: keep // 2] + " […] " + state[-(keep // 2):]
         if len(ids) <= self.max_state_tokens:
             return state
         half = self.max_state_tokens // 2
@@ -154,7 +206,9 @@ class EmbeddingReader(Reading):
         logits = dict(zip(keys, self.logits_of(h, names)))
         out = self.read(self.kind_of(q), logits, legend, marks)
         out["logits"] = logits
-        return out, len(self.tokenize(text))
+        ids = self.tokenize(text) if self._tokens is None else None
+        return out, (self._tokens if self._tokens is not None
+                     else len(ids) if ids is not None else len(text) // 4)
 
     def __call__(self, body: dict) -> dict:
         """The service's answer body for a request body — what `Client(transport=…)` calls."""

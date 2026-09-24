@@ -276,6 +276,7 @@ def _embedding_reader(vector):
 
     r.frame = r.frame or CHAT_FRAME
     r.served, r.name, r.endpoint = "m", "m", "http://x"
+    r._tokens, r._can_tokenize = None, True
     r.vector = lambda text: vector
     r.tokenize = lambda text: list(range(len(text.split())))
     return r

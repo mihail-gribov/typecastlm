@@ -6,8 +6,13 @@ directions — three verdict rows and the embedding rows of the 36 marks — and
 dot products. So the model installs like any other GGUF, and the reading happens in the client:
 
 ```
-llama-server -m typecastlm-qwen3.5-3.8b-q8_0.gguf --embeddings --port 8080
+llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0 --embeddings --port 8080
 ```
+
+`-hf` fetches the file by repository name into the Hub cache (`~/.cache/huggingface/hub`) on
+first start, 4 GB once, and resumes a download cut short; `hf download` puts the same file in the
+same cache, and `-m <path>` serves a file you already have. A private repository wants the token
+in `HF_TOKEN` for either.
 
 ```python
 from typecastlm import Client, EmbeddingReader
@@ -59,6 +64,15 @@ Two things, and the reader checks both at start:
   always normalises, and a unit vector keeps the winner but loses the probabilities — the reader
   refuses one.
 
+**Other servers.** The reader speaks two routes: llama-server's native `/embedding`, tried
+first, and the OpenAI-style `/v1/embeddings` that vLLM, TEI and llama-server itself expose,
+taken when the native one is absent (`api="openai"` forces it). Over the OpenAI route the
+server decides whether to normalise — vLLM serves the trunk raw with
+`--override-pooler-config '{"pooling_type": "LAST", "normalize": false}'`, llama-server's
+always normalises — and the reader refuses a unit vector at start rather than read it. That
+route has no tokenizer, so a state past the limit is folded by characters and the token count
+comes from the answer's `usage`. vLLM is described, not measured: no CUDA host was free for it.
+
 **Ollama** loads the GGUF but normalises every embedding before returning it (`server/routes.go`,
 marked as a TODO for the model to do), so it is not a backend: nothing calibrated survives the
 division. The day that changes, `EmbeddingReader` needs only another route.
@@ -81,7 +95,7 @@ and a 2400-token one in 30 s.
 ## Checking a deployment
 
 ```
-python3 tests/live_launcher.py http://127.0.0.1:8080
+python3 tests/live_launcher.py http://127.0.0.1:8080 mihailgribov/typecastlm-qwen3.5-3.8b-gguf
 ```
 
 The same questions as the service test — four modes, 26 options, a bundle, a folded state, the

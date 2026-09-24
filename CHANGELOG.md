@@ -38,7 +38,9 @@ The service grows into a deployment, and the rest of the Jev API arrives.
   the prompt from `prompt.json`, the vector from the server, 39 dot products, the mode's
   temperature. `Client(transport=EmbeddingReader(...))` is the same client with the same methods.
   Against transformers, bf16 stays within 0.006 in probability and Q8_0 within 0.014, every
-  verdict the same; Ollama normalises its embeddings and is not a backend. `docs/LAUNCHERS.md`.
+  verdict the same; Ollama normalises its embeddings and is not a backend. The reader speaks
+  llama-server's native route and the OpenAI-style `/v1/embeddings` (vLLM, TEI), refusing a
+  server that normalises. `docs/LAUNCHERS.md`.
 - The prompt and the reading of logits moved into `typecastlm.reading`, shared by the service's
   reader and the launcher's; `tests/same_reading.py` still agrees 4/4.
 
