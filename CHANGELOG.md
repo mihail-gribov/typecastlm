@@ -26,8 +26,9 @@ Jev's, field for field.
 - `usage.output_tokens`, always 0 — nothing is generated.
 - `--api-key` on the service: a bearer token, and 401 without it. Validation failures answer 422.
 - `docs/API.md` — the whole HTTP contract, laid out the way the reference it follows is.
-- `model/` holds what ships beside the weights, and `scripts/sync_model.py --check` proves the
-  reader there is the package's own.
+- `scripts/sync_model.py --check` proves that the reader shipped beside the weights is this
+  package's own, and `scripts/publish_hf.py` pushes the model repository from the clone next to
+  this one. `docs/RELEASING.md` says where each repository lives and what goes into it.
 
 ## 1.0.0
 

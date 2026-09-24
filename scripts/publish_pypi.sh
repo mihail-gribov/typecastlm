@@ -2,8 +2,8 @@
 # Publishing to PyPI. This never runs by itself: publication is irreversible — a version
 # number on PyPI is taken forever and cannot be re-uploaded.
 #
-#   ./publish.sh test     -> TestPyPI, for a rehearsal
-#   ./publish.sh          -> PyPI
+#   scripts/publish_pypi.sh test   -> TestPyPI, for a rehearsal
+#   scripts/publish_pypi.sh        -> PyPI
 set -eu
 cd "$(dirname "$0")"
 

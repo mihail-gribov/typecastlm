@@ -10,7 +10,12 @@ import sys
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CAL = json.loads((ROOT / "model/prompt.json").read_text(encoding="utf-8"))["calibration"]
+MODEL = ROOT.parent / "model"          # the model repository, when it is checked out beside us
+
+# Temperatures as inputs, not as truth: every expectation below is computed from these, so the
+# tests say what the code does with a calibration rather than what this checkpoint's happens to be.
+CAL = {"verdict": {"temperature": 1.3}, "three_answers": {"temperature": 2.85},
+       "choice": {"temperature": 1.75}, "scale": {"temperature": 3.9}}
 
 
 def test_import_costs_nothing_heavy():
@@ -94,9 +99,21 @@ def test_noul_and_the_verdict_of_the_local_reader_are_the_same_number():
             == pytest.approx(r._verdict(list(z.values()))["p"]["yes"]))
 
 
+@pytest.mark.skipif(not (pathlib.Path(__file__).resolve().parents[2] / "model").is_dir(),
+                    reason="the model repository is not checked out beside this one")
 def test_the_shipped_reader_has_not_drifted_from_the_package():
+    """The weights ship a copy of the reader, and a copy nobody checks goes stale."""
     assert subprocess.run([sys.executable, str(ROOT / "scripts/sync_model.py"), "--check"],
                           capture_output=True).returncode == 0
+
+
+@pytest.mark.skipif(not (pathlib.Path(__file__).resolve().parents[2] / "model").is_dir(),
+                    reason="the model repository is not checked out beside this one")
+def test_the_shipped_checkpoint_is_calibrated_for_every_mode():
+    """A partial calibration reads one mode at another's temperature, silently."""
+    cal = json.loads((MODEL / "prompt.json").read_text(encoding="utf-8"))["calibration"]
+    assert {"verdict", "three_answers", "choice", "scale"} <= set(cal)
+    assert all(cal[m]["temperature"] > 0 for m in ("verdict", "three_answers", "choice", "scale"))
 
 
 def test_the_shape_check_is_written_down():
