@@ -127,6 +127,25 @@ otherwise with the next mark from `0…9ABC…`. Ten levels is the practical lim
 marks are read worse than the rubric is written. Nothing in the reading enforces the order, so a
 distribution with two separated peaks is possible and means the rubric is being read as categories.
 
+### Several questions at once
+
+```python
+c.ask(policy, {
+    "covered":  {"type": "noul",   "instructions": "Is the claim covered?",
+                 "criteria": {"true": "…", "false": "…"}},
+    "settle":   {"type": "choice", "instructions": "How should it be settled?",
+                 "criteria": {"deny": "…", "pay": "…"}},
+})
+# {"answers": {"covered": {"logits": {...}}, "settle": {"logits": {...}}}, "input_tokens": 1843}
+```
+
+Any mix of the four modes in one call, keyed by names you choose; `type` is `noul`, `tfu`,
+`choice` or `scale`, which the wire also spells `score`. Unlike the four methods above
+this one hands back raw logits rather than a typed answer, so the softmax and the temperature of
+each mode are yours to apply. The state is currently read again for each question, so a bundle
+costs what the same questions cost one by one; sharing the prefix across a hybrid trunk is not
+implemented yet.
+
 ## Calibration
 
 The values are in the checkpoint's `prompt.json` under `calibration`, one temperature per mode,
@@ -166,21 +185,6 @@ where the wording came from.
 The server returns raw logits and computes no softmax: the probabilities, the temperature and the
 mode are the caller's business, and the same answer can be read again at another temperature
 without asking anything twice.
-
-## Many questions about one state
-
-```python
-c.ask(policy, {
-    "covered":  {"type": "noul",   "instructions": "Is the claim covered?",
-                 "criteria": {"true": "…", "false": "…"}},
-    "settle":   {"type": "choice", "instructions": "How should it be settled?",
-                 "criteria": {"deny": "…", "pay": "…"}},
-})
-```
-
-A bundle is answered in one call. The state is currently read again for each question, so a
-bundle costs what the same questions cost one by one; sharing the prefix across a hybrid trunk is
-not implemented yet.
 
 ## Using the model without any of this
 

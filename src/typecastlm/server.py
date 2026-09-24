@@ -150,6 +150,7 @@ class Reader:
         return text + C["tail"]
 
     KINDS = ("noul", "tfu", "choice", "score")
+    ALIASES = {"scale": "score"}   # the client calls it `scale`, the wire has always said `score`
     CHOICE_SYSTEM = "You answer with exactly one character from the given list."
     LETTERS = "ABCDEFGHIJKLMNOP"
     ORDINAL = "0123456789ABCDEFGHIJKLMNOP"
@@ -241,6 +242,7 @@ class Reader:
     def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int]]:
         """Prompt text, answer names, and the head outputs that carry them."""
         kind = q.get("type", "noul")
+        kind = self.ALIASES.get(kind, kind)
         if kind not in self.KINDS:
             raise ValueError(f"question type {kind!r} is not implemented; this service answers "
                              f"{self.KINDS}")
