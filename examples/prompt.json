@@ -1,13 +1,38 @@
 {
-  "note": "EXAMPLE. Copy it, change the wording, pass it with --prompt. It is not used unless you ask for it: the wording a checkpoint was measured with ships beside its weights.",
-  "system": "You are a decision function inside a program. You judge the state you are given against one yes/no question and answer with a single word. You never explain.",
-  "format_two": "Answer format: one word, either True or False.",
-  "means_two": "True means: {true}\nFalse means: {false}",
-  "body": "\n\n<state>\n{state}\n</state>\n\nQuestion: {question}\n",
-  "tail": "Answer: ",
-  "max_state_tokens": 32768,
-  "criteria_default": {
-    "true": "the answer to the question is yes",
-    "false": "the answer to the question is no"
+ "note": "the prompt this classifier was measured with; the model itself needs nothing else",
+ "system": "You are a decision function inside a program. You judge the state you are given against one yes/no question and answer with a single word. You never explain.",
+ "format_two": "Answer format: one word, either True, False or Unsure.",
+ "means_two": "True means: {true}\nFalse means: {false}\nUnsure means: the material leaves the question unclear, unanswered or self-contradictory, or the task itself is ill-posed — there is nothing here to judge.",
+ "body": "\n\n<state>\n{state}\n</state>\n\nQuestion: {question}\n",
+ "tail": "Answer: ",
+ "max_state_tokens": 32768,
+ "criteria_default": {
+  "true": "the answer to the question is yes",
+  "false": "the answer to the question is no"
+ },
+ "base": "Qwen/Qwen3.5-4B",
+ "cut_layer": 27,
+ "calibration": {
+  "note": "One temperature per mode, each fitted by minimising calibration error on a public set of ours — never on a benchmark we report. A temperature never changes the answer: it only makes the probability mean what it says. It does NOT transfer between distributions: it corrects the mismatch between confidence and the difficulty of the data, so refit it on two hundred labelled rows of your own.",
+  "verdict": {
+   "temperature": 1.3,
+   "fitted_on": "FEVER dev, 2000 decidable rows",
+   "effect": "calibration error 0.032 -> 0.011"
+  },
+  "three_answers": {
+   "temperature": 2.85,
+   "fitted_on": "FEVER dev, 3000 rows, a third of them undecidable",
+   "effect": "calibration error 0.236 -> 0.052"
+  },
+  "choice": {
+   "temperature": 1.75,
+   "fitted_on": "ARC-Challenge, 400 questions of four options",
+   "effect": "calibration error 0.070 -> 0.030"
+  },
+  "scale": {
+   "temperature": 3.9,
+   "fitted_on": "SST-5, 400 reviews on five levels",
+   "effect": "calibration error 0.329 -> 0.016"
   }
+ }
 }

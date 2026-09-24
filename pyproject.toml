@@ -11,9 +11,9 @@ requires-python = ">=3.10"
 authors = [{ name = "Mikhail Gribov", email = "mihail.gribov.rs@gmail.com" }]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-keywords = ["classifier", "zero-shot", "yes-no", "calibration", "prompt-injection", "llm"]
+keywords = ["decision-model", "jev-class", "classifier", "zero-shot", "calibration", "llm"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
@@ -26,6 +26,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Running the model in your own process. The client needs none of this.
+local = [
+    "torch>=2.2",
+    "transformers>=4.51",
+    "huggingface-hub>=0.24",
+]
 # Everything heavy lives here and only here: the server holds the weights, the client
 # knows nothing about them.
 server = [
@@ -42,7 +48,9 @@ typecastlm = "typecastlm.cli:main"
 typecastlm-serve = "typecastlm.server:main"
 
 [project.urls]
-Homepage = "https://huggingface.co/mihailgribov/qwen3-layer30-reader"
+Homepage = "https://github.com/mihail-gribov/typecastlm"
+Source = "https://github.com/mihail-gribov/typecastlm"
+Model = "https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/typecastlm"]

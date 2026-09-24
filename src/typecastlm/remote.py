@@ -1,47 +1,16 @@
-"""The client: a question over HTTP, an answer in numbers.
+"""HTTP client: a question about a state, an answer in numbers.
 
-Deliberately the only thing here. Running the model means seven gigabytes of weights and a
-deep-learning stack, and the machine that has a question is rarely the machine that should carry
-them — a laptop, a request handler, a lambda. So the package depends on `requests` and stops
-there.
+    noul(state, instructions, true, false)   -> Answer(prob, margin, unknown, logits, p)
+    tfu(state, instructions, true, false)    -> Ternary(p, verdict, confidence, logits)
+    choice(state, instructions, options)     -> Choice(p, verdict, confidence, logits)
+    scale(state, instructions, levels)       -> Choice, for an ordinal rubric
+    ask(state, questions)                    -> the service body, any number of questions
 
-Two question types, and they are not the same thing wearing two names:
+`noul` matches the hosted service field for field. The rest are extensions: `unknown` is returned
+whether or not the question asks for it, `logits` are raw, and option names in `choice` and
+`scale` come back as the keys of `p`.
 
-    noul    the service's own — one probability of the `true` criterion among the two that decide
-            the question. Kept exactly as it is over there, so a harness written against that
-            service reads what it expects.
-    tfu     ours — the three probabilities as they are, plus which one leads. A document that
-            decides nothing comes back as that, instead of as a hedged yes.
-
-The interface is compatible with the hosted decision service and wider by one number:
-
-    noul    the probability of the `true` criterion among the two that decide the question
-    unknown how much of the state points at "nothing here decides it" — never asked for, always
-            returned
-    logits  what the model said, before any softmax: probabilities follow from them at whatever
-            temperature is asked for, and the log-odds follow exactly rather than through the
-            logarithm of a rounded probability
-
-Naming the answers is not a knob here, because it is not one over there either: in `choice` the
-keys of `criteria` ARE the names, and they come back as the keys of `probabilities`. When `choice`
-arrives it will name them that way; until then there is nothing to rename, and a second mechanism
-for it would have been ours alone.
-
-Since the first release there are two more, and they are not approximations of the first: the checkpoint
-carries a row per answer mark, so a choice or a rubric level is read the same way a verdict is —
-one pass, one dot product per option.
-
-    choice  two to sixteen options, exactly one correct; marks are letters, because order among
-            the options means nothing
-    score   an ordinal rubric; marks are the levels\' own digits, because there order is the whole
-            point — a miss lands on a neighbouring level rather than anywhere
-
-A bundle of several questions is answered as a bundle: the material is read once for all of them
-and each question costs only its own tail — the same economy the hosted service has, and the same
-numbers as asking one by one.
-
-Running the checkpoint yourself needs none of this: it is an ordinary classifier and
-`transformers` loads it directly.
+The service holds the weights; this package depends on `requests` only.
 """
 from __future__ import annotations
 
@@ -50,18 +19,13 @@ import os
 import time
 from dataclasses import dataclass
 
-DEFAULT_ENDPOINT = "https://api.promptidote.ru/v1/typecast"
+DEFAULT_ENDPOINT = ""          # no hosted service; set one or run `typecastlm-serve`
 RETRY_CODES = (408, 429, 500, 502, 503, 504, 529)
 
 
 @dataclass
 class Ternary:
-    """What `tfu` returns: the three probabilities as they are, and what leads.
-
-    Our own shape, not the service's. `noul` answers "yes or no, and how sure"; this one answers
-    "which of the three", and a document that decides nothing shows up as itself rather than as a
-    hedged yes.
-    """
+    """What `tfu` returns: the three probabilities and which one leads."""
 
     p: dict[str, float]
     verdict: str
@@ -74,12 +38,8 @@ class Ternary:
 
 @dataclass
 class Choice:
-    """What `choice` and `scale` return: a probability per option, and which one leads.
-
-    The keys are YOUR names for the options — they never reach the prompt, where the options are
-    marked with letters or with the levels' own digits. The names travel from the request to the
-    answer and nothing else, exactly as in the hosted service.
-    """
+    """What `choice` and `scale` return: a probability per option and which one leads. Keys are
+    the option names from the request."""
 
     p: dict[str, float]
     verdict: str
@@ -92,13 +52,8 @@ class Choice:
 
 @dataclass
 class Answer:
-    """What `noul` returns.
-
-    `prob`, `margin`, `ms`, `input_tokens` and `model` are the service's fields. The extensions
-    are `unknown` — the weight of "nothing here decides it", which the criteria never ask for —
-    and `logits` with `p`: what the model said, and what that comes to at the temperature asked
-    for.
-    """
+    """What `noul` returns. `prob`, `margin`, `ms`, `input_tokens`, `model` are the service\'s
+    fields; `unknown`, `logits` and `p` are extensions."""
 
     prob: float
     margin: float
@@ -121,30 +76,19 @@ class Client:
     def __init__(self, endpoint: str | None = None, api_key: str | None = None,
                  model: str = "typecastlm-qwen3.5-3.8b", timeout: float = 10.0, retries: int = 5,
                  pool: int = 32, temperature: float | None = None, calibrated: bool = True):
-        """One knob, applied HERE, because the service sends the logits.
-
-        `temperature` divides them before the softmax, and each mode has its own — the verdict,
-        the three answers, a choice and a scale are calibrated separately, because a temperature
-        corrects the mismatch between confidence and the difficulty of the DATA, and that differs
-        per task. Passing one here overrides all of them; `calibrated=False` turns them off.
-
-        Per-answer shifts used to live here too and are gone since 1.0.0. They were needed while
-        the third row of the head was an average of vocabulary rows living on its own scale: the
-        third logit sat far below the other two and a softmax crushed it to zero. The head now
-        reads the third answer with a direction computed from data and scaled to the other two,
-        and the perverse offset went with it — on a balanced set the model picks the third answer
-        on 27% of rows where it is right on 33%, and fitting shifts on top buys 0.005 of
-        calibration error and no accuracy at all.
-
-        A temperature changes confidence and nothing else: the order of documents is untouched,
-        so a ranking stays exactly as it was. Which makes it a calibration knob, to be set on your
-        own data — and it lives client-side because the service sends the logits, so the same
-        answer can be read again at another temperature without asking anything twice.
-        """
+        """`temperature` overrides the checkpoint\'s per-mode temperatures; `calibrated=False`
+        disables them. Temperatures are applied here because the service returns logits, so an
+        answer can be re-read at another temperature without asking again. They change no
+        ordering, only confidence."""
         import requests
         from requests.adapters import HTTPAdapter
 
         self.endpoint = endpoint or os.environ.get("TYPECASTLM_ENDPOINT", DEFAULT_ENDPOINT)
+        if not self.endpoint:
+            raise ValueError(
+                "no endpoint. Pass Client(endpoint=...), set TYPECASTLM_ENDPOINT, or run the "
+                "model yourself: `pip install \"typecastlm[server]\"` and `typecastlm-serve`, or "
+                "`pip install \"typecastlm[local]\"` and use typecastlm.Reader in this process")
         self.key = api_key or os.environ.get("TYPECASTLM_API_KEY", "")
         self.model, self.timeout, self.retries = model, timeout, retries
         self._s = requests.Session()
@@ -187,12 +131,7 @@ class Client:
         raise RuntimeError("unreachable")
 
     def _soft(self, logits: dict, mode: str) -> dict[str, float]:
-        """Softmax по выходам ОДНОГО режима, с его температурой.
-
-        Нормировать все выходы головы разом бессмысленно: это ответы на разные вопросы, а не
-        варианты одного. Температура у каждого режима своя, потому что правит она не веса, а
-        несоответствие уверенности трудности данных, и на разных задачах оно разное.
-        """
+        """Softmax over one mode\'s outputs, at that mode\'s temperature."""
         v = {n: z / self._temp(mode) for n, z in logits.items()}
         m = max(v.values())
         e = {n: math.exp(x - m) for n, x in v.items()}
@@ -200,11 +139,11 @@ class Client:
         return {n: x / s for n, x in e.items()}
 
     def choice(self, state: str, instructions: str, options: dict[str, str]) -> "Choice":
-        """Один верный вариант из нескольких. Имена вариантов ваши и в промпт не уходят."""
+        """Pick one of several options. Option names are yours and do not reach the prompt."""
         return self._pick(state, instructions, options, "choice")
 
     def scale(self, state: str, instructions: str, levels: dict[str, str]) -> "Choice":
-        """Порядковая шкала: уровни идут своими метками, и порядок несут они же."""
+        """Pick a level of an ordinal rubric."""
         return self._pick(state, instructions, levels, "score")
 
     def _pick(self, state: str, instructions: str, options: dict[str, str], kind: str) -> "Choice":
@@ -250,13 +189,8 @@ class Client:
                        model=str(data.get("model", self.model)))
 
     def ask(self, state: str, questions: dict) -> dict:
-        """Questions in the body the service takes — as many as you like about one state.
-
-        A bundle is the cheap way to ask: the material is read once for all of them, and only
-        each question\'s own tail is computed. On a policy of three thousand tokens that is about
-        four times faster than asking one by one, and the numbers are identical — the material\'s
-        state does not depend on the question, so sharing it changes nothing.
-        """
+        """Any number of questions about one state. The state is read once for the bundle;
+        results equal asking one by one."""
         if not questions:
             raise ValueError("no questions")
         data, _ = self._post({"state": state, "model": self.model, "questions": questions})

@@ -59,10 +59,7 @@ class Reader:
 
     EXPECTED = ("true", "false", "unsure")
     PROMPT_FIELDS = ("system", "format_two", "means_two", "body", "tail", "max_state_tokens")
-    # Метки вариантов и шкалы живут в той же голове, отдельными строками: `mark_A` … `mark_9`.
-    # Поэтому выбор и шкала читаются тем же одним проходом, что и вердикт, и клиенту не нужно
-    # ничего знать про словарь модели.
-    MARK_PREFIX = "mark_"
+    MARK_PREFIX = "mark_"          # head rows for choice and scale marks
 
     def check(self, strict: bool = True) -> list[str]:
         """Is this checkpoint the thing the clients are written against?
@@ -88,6 +85,14 @@ class Reader:
         missing = [f for f in self.PROMPT_FIELDS if f not in self.prompt_cfg]
         if missing:
             bad.append(f"prompt.json is missing {missing}")
+        # A partial calibration is worse than none: the client reads a missing mode at
+        # temperature 1.0 without noticing.
+        cal = self.prompt_cfg.get("calibration") or {}
+        modes = {"verdict", "three_answers", "choice", "scale"}
+        have = modes & set(cal)
+        if cal and have != modes:
+            bad.append(f"calibration covers {sorted(have)}; the client expects {sorted(modes)}, "
+                       "and reads a missing mode at temperature 1.0")
         w = getattr(getattr(self.model, "score", None), "weight", None)
         if w is not None and w.shape[0] != n:
             bad.append(f"head has {w.shape[0]} rows against {n} labels")
@@ -150,12 +155,8 @@ class Reader:
     ORDINAL = "0123456789ABCDEFGHIJKLMNOP"
 
     def marks_for(self, keys: list[str], ordinal: bool) -> list[str]:
-        """Метки: для шкалы — её собственные цифры, если они однотокенные, иначе общий ряд.
-
-        Цифры несут ПОРЯДОК, и на порядковых задачах это видно по величине промаха, а не по
-        попаданию: ошибаясь, читатель уходит на соседний уровень. Для выбора порядок не нужен, и
-        метками идут буквы.
-        """
+        """Marks for the options: a rubric\'s own digits when usable, else `0..9A..P`; letters
+        for a choice."""
         if ordinal:
             own = [str(k) for k in keys]
             if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and x in self.marks
@@ -191,17 +192,16 @@ class Reader:
         return text + "Answer: "
 
     def answer_many(self, state: str, questions: dict) -> tuple[dict, int]:
-        """Пачка вопросов по одному материалу: материал читается ОДИН раз.
-
-        Внимание причинное, а материал в промпте стоит перед вопросом, поэтому его состояние от
-        вопроса не зависит: кеш ключей и значений считается на общем начале однажды, дальше каждый
-        вопрос прогоняется своим хвостом, и кеш откатывается. Это не приближение — числа те же,
-        что при отдельных проходах.
-
-        Граница берётся по САМИМ последовательностям токенов: BPE склеивает символы через стык, и
-        отдельно токенизированный хвост оказывается не тем же, что хвост целой строки.
-        """
+        """Answer several questions about one state."""
         from transformers import DynamicCache
+
+        # Sharing the prefix across a hybrid trunk is not implemented yet: the questions are
+        # answered one by one, which costs what asking them separately costs.
+        out, tokens = {}, 0
+        for key, q in questions.items():
+            ans, t = self.answer(state, q)
+            out[key], tokens = ans, tokens + t
+        return out, tokens
 
         built = [(key, self.prepare(state, q)) for key, q in questions.items()]
         fulls = [self.tok(text, add_special_tokens=False)["input_ids"] for _, (text, _, _) in built]
@@ -209,7 +209,7 @@ class Reader:
         n = 0
         while n < n_min and len({f[n] for f in fulls}) == 1:
             n += 1
-        if n < 32 or len(fulls) == 1:                 # делить нечего
+        if n < 32 or len(fulls) == 1:                 # nothing worth sharing
             out, tokens = {}, 0
             for key, q in questions.items():
                 ans, t = self.answer(state, q)
@@ -239,7 +239,7 @@ class Reader:
         return out, tokens
 
     def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int]]:
-        """Текст запроса, имена ответов и номера выходов головы, которые их несут."""
+        """Prompt text, answer names, and the head outputs that carry them."""
         kind = q.get("type", "noul")
         if kind not in self.KINDS:
             raise ValueError(f"question type {kind!r} is not implemented; this service answers "
@@ -260,37 +260,16 @@ class Reader:
         return text, [k for k, _ in options], [self.marks[m] for m in marks]
 
     def answer(self, state: str, q: dict) -> tuple[dict, int]:
-        kind = q.get("type", "noul")
-        if kind not in self.KINDS:
-            raise ValueError(f"question type {kind!r} is not implemented; this service answers "
-                             f"{self.KINDS}")
-        crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
-        if kind in ("noul", "tfu"):
-            if len(crit) != 2:
-                raise ValueError("a yes/no question takes exactly two criteria; the third answer "
-                                 "is read without being asked for")
-            t, f = list(crit.values())
-            prompt = self.build(state, q["instructions"], t, f)
-            wanted = list(range(3))
-            keys = list(self.EXPECTED)
-        else:
-            if len(crit) < 2:
-                raise ValueError(f"a {kind} question takes at least two options")
-            options = list(crit.items())
-            marks = self.marks_for([k for k, _ in options], ordinal=(kind == "score"))
-            prompt = self.build_marks(state, q["instructions"], options, marks,
-                                      ordinal=(kind == "score"))
-            wanted = [self.marks[m] for m in marks]
-            keys = [k for k, _ in options]
-
-        enc = self.tok([prompt], return_tensors="pt", add_special_tokens=False).to(self.device)
+        """One question. Shares `prepare` with the bundle path."""
+        text, keys, wanted = self.prepare(state, q)
+        enc = self.tok([text], return_tensors="pt", add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
             z = self.model(**enc).logits[0].float().cpu()
-        # Сырые логиты, и только те, что относятся к вопросу. Softmax здесь не считается: 29
-        # выходов головы — ответы на разные вопросы, а не варианты одного, и нормировать их разом
-        # бессмысленно. Режим, его температура и вероятности — дело спрашивающего.
-        logits = {k: float(z[i]) for k, i in zip(keys, wanted)}
-        return {"kind": kind, "logits": logits}, int(enc["attention_mask"].sum())
+        # Raw logits, only those the question uses. The softmax, its temperature and the mode
+        # belong to the caller.
+        return ({"kind": q.get("type", "noul"),
+                 "logits": {k: float(z[i]) for k, i in zip(keys, wanted)}},
+                int(enc["attention_mask"].sum()))
 
 
 def q_kind(q: dict) -> str:

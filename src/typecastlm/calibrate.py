@@ -76,7 +76,6 @@ def calibrate(rows: list[tuple[dict, str]], grid: tuple[float, float, float] = (
         return _ece(conf, ok)
 
     lo, hi, step = grid
-    best = min((at(lo + i * step) for i in range(int((hi - lo) / step) + 1)), default=None)
     T = min((lo + i * step for i in range(int((hi - lo) / step) + 1)), key=at)
     return {"temperature": float(T), "calibration_error": float(at(T)),
             "calibration_error_before": float(at(1.0)), "rows": len(rows),

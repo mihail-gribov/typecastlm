@@ -1,20 +1,31 @@
 # typecastlm
 
-**A client for a Jev-class decision model with open weights**: ask a document a closed question,
-get numbers back. The same interface that class already speaks, and one answer more — besides yes
-and no it returns **"nothing here decides it"**, which no question has to ask for. Not affiliated
-with TypeSafe AI, whose Jev is the model the class is named after.
+**A client for a Jev-class decision model with open weights.** Ask a document a question, get
+numbers back. Four modes:
+
+| mode | the question | the answer |
+|---|---|---|
+| **`noul`** | yes or no, two criteria | `p(yes)` among the two, plus `unknown` alongside |
+| **`tfu`** | the same question | one distribution over `true`, `false`, **`unsure`** |
+| **`choice`** | 2–16 options, one correct | a probability per option |
+| **`scale`** | an ordinal rubric, up to 10 levels | a probability per level |
+
+**The third answer is what a two-answer reader cannot give.** `unsure` is a separate output, not a
+hedged yes: it comes back whether or not the question asks for it — threshold it to abstain, to
+route to a human, or to drop a document from a pipeline.
+
+Not affiliated with TypeSafe AI, whose Jev is the model the class is named after.
 
 Why this one:
 
-* **Fast** — 52 ms per decision, because nothing is generated: one forward pass, no tokens
-  written.
-* **It can say "I can't tell"** — a third answer that the question never asks for.
+* **Fast** — **40 to 900 ms** per decision depending on the length of the material; nothing is
+  generated, so it is one forward pass and no tokens written.
+* **A third answer.** Two-answer readers must call something a yes; this one does not have to.
 * **Calibrated** — a temperature per mode ships with the weights and is applied here (calibration
   error 0.011–0.052).
 * **Thin client** — one dependency, `requests`, and it installs in a second. The weights live on
   the service side.
-* **Three shapes of question**: yes/no, one-of-several, and a level on a rubric.
+* **Four modes**, each with its own calibration.
 
 ## Install
 
@@ -61,17 +72,16 @@ prompt.
 
 ## Calibration
 
-Each mode carries its own temperature, shipped beside the weights and applied by the client:
+The checkpoint ships a temperature per mode and the client applies it:
 
-| mode | temperature | calibration error |
-|---|---|---|
-| verdict | 1.30 | 0.032 → 0.011 |
-| three answers | 2.85 | 0.236 → 0.052 |
-| choice | 1.75 | 0.070 → 0.030 |
-| scale | 3.90 | 0.329 → 0.016 |
+| mode | temperature |
+|---|---|
+| verdict | 1.30 |
+| three answers | 2.85 |
+| choice | 1.75 |
+| scale | 3.90 |
 
-A temperature changes no answer — `argmax` is invariant to it — only what a probability means, and
-it does not transfer between pools. Fit your own on a couple of hundred labelled rows:
+A temperature changes no answer, only the probability. Fit your own:
 
 ```python
 from typecastlm import calibrate
@@ -109,9 +119,9 @@ c.ask(policy, {
 })
 ```
 
-The material is read once for the whole bundle and each question costs only its own tail — about
-four times faster than asking one by one on a policy of three thousand tokens, and the numbers are
-identical.
+A bundle is answered in one call. The state is currently read again for each question, so a
+bundle costs what the same questions cost one by one; sharing the prefix across a hybrid trunk is
+not implemented yet.
 
 ## Using the model without any of this
 

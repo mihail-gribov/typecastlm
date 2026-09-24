@@ -17,12 +17,28 @@ carry seven gigabytes of weights and a deep-learning stack.
     c.scale(review, "How positive is it?", {"0": "very negative", "1": "negative",
                                             "2": "neutral", "3": "positive"}).p
 
-Running the model yourself is a separate matter and needs no client: the checkpoint is an ordinary
-classifier whose head carries a row per answer and per answer mark, so `transformers` loads it and
-reads all three modes directly — see the model card.
+Running the model in this process instead of calling a service:
+
+    pip install "typecastlm[local]"
+
+    from typecastlm import Reader
+    r = Reader("mihailgribov/typecastlm-qwen3.5-3.8b")
+    r.ask(document, "Is the claim supported?", true="…", false="…")
 """
 from .calibrate import calibrate
 from .remote import Answer, Choice, Client, Ternary
 
-__all__ = ["Client", "Answer", "Ternary", "Choice", "calibrate"]
+__all__ = ["Client", "Answer", "Ternary", "Choice", "Reader", "calibrate"]
+
+
+def __getattr__(name: str):
+    """`Reader` is imported on use: it needs torch, which the client must not require."""
+    if name == "Reader":
+        try:
+            from .local import Reader
+        except ImportError as e:                     # pragma: no cover
+            raise ImportError("Reader runs the model in this process and needs the extra: "
+                              "pip install 'typecastlm[local]'") from e
+        return Reader
+    raise AttributeError(name)
 __version__ = "1.0.0"
