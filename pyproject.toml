@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "typecastlm"
 version = "1.0.0"
-description = "Ask a document a closed question and get probabilities back: yes, no, and nothing-here-decides-it"
+description = "Client for a Jev-class decision model with open weights: closed questions answered with calibrated probabilities — yes, no, and nothing-here-decides-it"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Mikhail Gribov", email = "mihail.gribov.rs@gmail.com" }]
@@ -13,7 +13,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 keywords = ["decision-model", "jev-class", "classifier", "zero-shot", "calibration", "llm"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
