@@ -72,16 +72,17 @@ prompt.
 
 ## Calibration
 
-The checkpoint ships a temperature per mode and the client applies it:
+The checkpoint ships a temperature per mode and the client applies it. What each was fitted on:
 
-| mode | temperature |
+| mode | fitted on |
 |---|---|
-| verdict | 1.30 |
-| three answers | 2.85 |
-| choice | 1.75 |
-| scale | 3.90 |
+| `noul` | FEVER dev, decidable rows |
+| `tfu` | FEVER dev, a third of it undecidable |
+| `choice` | ARC-Challenge, four options |
+| `scale` | SST-5, five ordered levels |
 
-A temperature changes no answer, only the probability. Fit your own:
+A temperature changes no answer, only the probability, and it does not carry between pools of
+different difficulty. Fit your own:
 
 ```python
 from typecastlm import calibrate
