@@ -52,6 +52,7 @@ class Reader:
         self.labels = [self.model.config.id2label[i] for i in range(self.model.config.num_labels)]
         self.col = {l: i for i, l in enumerate(self.labels)}
         self.marks = {l[len("mark_"):]: i for l, i in self.col.items() if l.startswith("mark_")}
+        self._rows: dict = {}                    # mark -> the row that reads it
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         limit = getattr(self.model.config, "max_position_embeddings", None)
@@ -155,23 +156,41 @@ class Reader:
     KINDS = ("noul", "tfu", "choice", "score")
     ALIASES = {"scale": "score"}   # the client calls it `scale`, the wire has always said `score`
     CHOICE_SYSTEM = "You answer with exactly one character from the given list."
-    LETTERS = "ABCDEFGHIJKLMNOP"
-    ORDINAL = "0123456789ABCDEFGHIJKLMNOP"
+    LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    ORDINAL = "0123456789" + LETTERS
+
+    def mark_row(self, mark: str):
+        """The direction that reads this mark, or None if the mark is not a single token.
+
+        A mark row is the model\'s own output row for that token — that is how the head was
+        packed — so a mark the head does not carry is still readable: the row is in the embedding,
+        and taking it from there gives the same number.
+        """
+        if mark not in self._rows:
+            col = self.marks.get(mark)
+            if col is not None:
+                self._rows[mark] = self.model.score.weight[col].float()
+            else:
+                ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
+                                      for x in (" " + mark, mark)) if len(t) == 1]
+                emb = self.model.get_input_embeddings().weight  # tied, and where marks come from
+                self._rows[mark] = emb[ids[0]].float() if ids else None
+        return self._rows[mark]
 
     def marks_for(self, keys: list[str], ordinal: bool) -> list[str]:
-        """Marks for the options: a rubric\'s own digits when usable, else `0..9A..P`; letters
+        """Marks for the options: a rubric\'s own digits when usable, else `0..9A..Z`; letters
         for a choice."""
         if ordinal:
             own = [str(k) for k in keys]
-            if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and x in self.marks
+            if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and self.mark_row(x) is not None
                                       for x in own):
                 return own
-            row = [c for c in self.ORDINAL if c in self.marks]
+            row = [c for c in self.ORDINAL if self.mark_row(c) is not None]
         else:
-            row = [c for c in self.LETTERS if c in self.marks]
+            row = [c for c in self.LETTERS if self.mark_row(c) is not None]
         if len(row) < len(keys):
-            raise ValueError(f"{len(keys)} options, but this checkpoint has {len(row)} usable "
-                             "marks")
+            raise ValueError(f"{len(keys)} options, but only {len(row)} marks are single tokens "
+                             "for this model")
         return row[: len(keys)]
 
     def build_marks(self, state: str, instructions: str, options: list[tuple[str, str]],
@@ -214,8 +233,8 @@ class Reader:
                              f"answers {self.KINDS}")
         return kind
 
-    def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[int], dict]:
-        """Prompt text, answer names, the head outputs that carry them, and the legend.
+    def prepare(self, state: str, q: dict) -> tuple[str, list[str], list[str] | None, dict]:
+        """Prompt text, answer names, the marks that carry them if any, and the legend.
 
         `criteria` is a map of names to descriptions, and for `score` it may also be an ordered
         list, which is the form the Jev API documents; a list is read as levels 0, 1, 2 and so on.
@@ -227,7 +246,7 @@ class Reader:
                 raise ValueError("a yes/no question takes exactly two criteria; the third answer "
                                  "is read without being asked for")
             t, f = list(crit.values())
-            return self.build(state, q["instructions"], t, f), list(self.EXPECTED), [0, 1, 2], {}
+            return self.build(state, q["instructions"], t, f), list(self.EXPECTED), None, {}
         if isinstance(crit, (list, tuple)):
             crit = {str(i): d for i, d in enumerate(crit)}
         if len(crit) < 2:
@@ -236,7 +255,7 @@ class Reader:
         marks = self.marks_for([k for k, _ in options], ordinal=(kind == "score"))
         text = self.build_marks(state, q["instructions"], options, marks,
                                 ordinal=(kind == "score"))
-        return (text, [k for k, _ in options], [self.marks[m] for m in marks], dict(options))
+        return text, [k for k, _ in options], marks, dict(options)
 
     def _soft(self, logits: dict, mode: str) -> dict:
         v = {k: z / self.temp(mode) for k, z in logits.items()}
@@ -272,11 +291,15 @@ class Reader:
 
     def answer(self, state: str, q: dict) -> tuple[dict, int]:
         """One question. Shares `prepare` with the bundle path."""
-        text, keys, wanted, legend = self.prepare(state, q)
+        text, keys, marks, legend = self.prepare(state, q)
         enc = self.tok([text], return_tensors="pt", add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
-            z = self.model(**enc).logits[0].float().cpu()
-        logits = {k: float(z[i]) for k, i in zip(keys, wanted)}
+            if marks is None:                    # the three answers always have head rows
+                z = self.model(**enc).logits[0, :3].float().cpu()
+            else:
+                h = self.model.model(**enc).last_hidden_state[0, -1].float()
+                z = (self.torch.stack([self.mark_row(m) for m in marks]) @ h).cpu()
+        logits = {k: float(v) for k, v in zip(keys, z)}
         out = self.read(self.kind_of(q), logits, legend)
         out["logits"] = logits
         return out, int(enc["attention_mask"].sum())

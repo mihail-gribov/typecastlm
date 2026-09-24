@@ -27,8 +27,8 @@ from pathlib import Path
 
 import torch
 
-LETTERS = "ABCDEFGHIJKLMNOP"
-ORDINAL = "0123456789ABCDEFGHIJKLMNOP"
+LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ORDINAL = "0123456789" + LETTERS
 CHOICE_SYSTEM = "You answer with exactly one character from the given list."
 
 
@@ -50,6 +50,7 @@ class Reader:
         self.names = [self.model.config.id2label[i]
                       for i in range(self.model.config.num_labels)]
         self.col = {n: i for i, n in enumerate(self.names)}
+        self._rows: dict[str, torch.Tensor | None] = {}      # mark -> the row that reads it
         # The head emits 29 raw logits: three answers and one per mark. A softmax over all of
         # them is meaningless — each mode normalises its own subset.
         self.cal = self.cfg.get("calibration", {})
@@ -76,9 +77,28 @@ class Reader:
         return self._chat(C["system"], body, C["tail"])
 
     # -- marks ----------------------------------------------------------------------------------
+    def _mark_row(self, mark: str) -> torch.Tensor | None:
+        """The direction that reads this mark, or None if the mark is not one token.
+
+        A mark row is the model's own output row for that token — that is how the head was
+        packed — so a mark the head does not carry is not a mark the model cannot read: the row
+        is right there in the embedding, and taking it from there gives the same number.
+        """
+        if mark in self._rows:
+            return self._rows[mark]
+        col = self.col.get(f"mark_{mark}")
+        if col is not None:
+            row = self.model.score.weight[col].float()
+        else:
+            ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
+                                  for x in (" " + mark, mark)) if len(t) == 1]
+            emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
+            row = emb[ids[0]].float() if ids else None
+        self._rows[mark] = row
+        return row
+
     def _has_mark(self, mark: str) -> bool:
-        """True if the head carries a row for this mark."""
-        return f"mark_{mark}" in self.col
+        return self._mark_row(mark) is not None
 
     def _marks_for(self, ids: list[str], ordinal: bool) -> list[str]:
         """Marks for the options: a rubric\'s own digits when usable, else letters or `0..9A..P`."""
@@ -145,8 +165,8 @@ class Reader:
                 + "\n".join(f"{m}. {desc}" for m, (_, desc) in zip(marks, options))
                 + f"\n\n{ask}")
         h = self._last(self._chat(CHOICE_SYSTEM, body, "Answer: "))
-        full = self.model.score(h.to(self.model.score.weight.dtype)).float()
-        z = [float(full[self.col[f"mark_{m}"]]) for m in marks]
+        R = torch.stack([self._mark_row(m) for m in marks])
+        z = (R @ h.float()).tolist()
         w = [v / self._temp("scale" if ordinal else "choice") for v in z]
         e = [math.exp(v - max(w)) for v in w]
         s = sum(e)

@@ -7,7 +7,7 @@ numbers back. Four modes:
 |---|---|---|
 | **`noul`** | yes or no, two criteria | `p(yes)`, a softmax over those two answers |
 | **`tfu`** | the same question | one distribution over `true`, `false`, **`unsure`** |
-| **`choice`** | 2–16 options, one correct | a probability per option |
+| **`choice`** | 2–26 options, one correct | a probability per option |
 | **`scale`** | an ordinal rubric, up to 10 levels | a probability per level |
 
 Three of them — `noul`, `choice` and `scale` — carry Jev's names, Jev's arguments and Jev's
@@ -128,7 +128,7 @@ of two, so here the third competes with the other two. Use it where
 with a two-answer detector. There is no third criterion to write: `unsure` is what is left when
 neither of the two fits.
 
-### `choice` — one of 2 to 16 options
+### `choice` — one of 2 to 26 options
 
 ```python
 r = c.choice(policy, "How should this claim be settled?",
@@ -141,11 +141,13 @@ r.verdict     # 'pay_with_sublimit'
 r.confidence  # 0.74 — the probability of the leader, not a separate number
 ```
 
-Exactly one option is correct and the options carry no order. Inside they are marked `A`, `B`,
-`C`…, one output row per mark; your names travel from the request to the answer and never reach
-the prompt, so renaming an option cannot move the answer. Two options are allowed, but `noul`
-reads a two-way question better, because its rows were fitted for that question and the marks were
-not.
+Exactly one option is correct and the options carry no order. Inside they are marked `A` to `Z`,
+one row per mark; your names travel from the request to the answer and never reach the prompt, so
+renaming an option cannot move the answer. Twenty-six is where single-token marks run out. Reading
+holds to about six options and then slips — measured on a synthetic task with one right answer
+among K: 0.995 up to six, 0.965 at eight, 0.935 at twelve, 0.86 from sixteen on. Two options are
+allowed, but `noul` reads a two-way question better, because its rows were fitted for that
+question and the marks were not.
 
 ### `scale` — a level on an ordinal rubric
 

@@ -61,8 +61,8 @@ criterion anyone writes: it is what is left when neither of the two fits. Jev ha
 
 ### `choice` — one of several options
 
-`criteria` is a map of options to descriptions, two to sixteen of them, exactly one correct and no
-order among them. Sixteen is where this checkpoint's marks end; Jev takes up to 255.
+`criteria` is a map of options to descriptions, two to twenty-six of them, exactly one correct
+and no order among them. Twenty-six is where single-token marks end; Jev takes up to 255.
 
 ```json
 {"type": "choice",
@@ -144,7 +144,7 @@ call can be re-read as the other only at that other mode's temperature.
  "logits": {"billing": 4.1, "technical": 1.9, "sales": -3.0}}
 ```
 
-Keys are your option names throughout; inside they are marked `A`, `B`, `C`… and the marks do not
+Keys are your option names throughout; inside they are marked `A` to `Z` and the marks do not
 appear in the answer.
 
 ### `score`
@@ -165,7 +165,7 @@ between 0 and one less than the number of levels and lands between levels: 1.05 
 | status | when |
 |---|---|
 | `401 Unauthorized` | the service was started with `--api-key` and the `Authorization` header does not carry it |
-| `422 Unprocessable Entity` | no questions; an unknown `type`; a yes/no question without exactly two criteria; a `choice` or `score` with fewer than two options; more options than the checkpoint has marks; a body that is not the shape above |
+| `422 Unprocessable Entity` | no questions; an unknown `type`; a yes/no question without exactly two criteria; a `choice` or `score` with fewer than two options; more options than there are single-token marks; a body that is not the shape above |
 | `500` | the model failed to answer |
 
 A service of your own has no rate limit, so `429` and `529` do not arise here; the bundled client
