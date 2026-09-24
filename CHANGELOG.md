@@ -42,7 +42,8 @@ Jev's, field for field.
 - The connection pool was mounted for `https://` only, so a local service — which is the usual
   one, since there is no hosted endpoint — fell back to the default pool.
 - `--api-key` on the service: a bearer token, and 401 without it. Validation failures answer 422.
-- `docs/API.md` — the whole HTTP contract, laid out the way the reference it follows is.
+- `docs/API.md` — the whole HTTP contract, laid out the way the reference it follows is, and a
+  section naming every difference a caller moving from Jev would meet.
 - `scripts/sync_model.py --check` proves that the reader shipped beside the weights is this
   package's own, and `scripts/publish_hf.py` pushes the model repository from the clone next to
   this one. `docs/RELEASING.md` says where each repository lives and what goes into it.

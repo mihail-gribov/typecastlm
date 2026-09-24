@@ -74,9 +74,11 @@ and no order among them. Twenty-six is where single-token marks end; Jev takes u
 
 ### `score` — a level on an ordinal rubric
 
-`criteria` is an ordered list of levels, at least two of them. Ten is the documented limit, Jev's
-as well: the checkpoint carries marks for more and the service will accept them, but the reading
-degrades past ten. `scale` is accepted as a synonym of `score`.
+`criteria` is an ordered list of levels, at least two of them. Ten is the recommended limit and
+the one Jev enforces; this service accepts up to 36, because the marks run `0…9` and then `A…Z`.
+Past nine the reading degrades — on levels 10–14 accuracy is 0.05 against 0.215 on 0–9 — so the
+extra levels are there for a rubric you already have, not as a reason to make one. `scale` is
+accepted as a synonym of `score`.
 
 ```json
 {"type": "score",
@@ -158,7 +160,26 @@ appear in the answer.
 
 `score` is the mean level, `sum(i * p(i))` over the levels in the order you gave them, so it lies
 between 0 and one less than the number of levels and lands between levels: 1.05 is just past
-`Frustrated`. `legend` says what each position means, which is what makes that number readable.
+`Frustrated`. Positions carry the arithmetic, never the mark, so a level marked `A` because it is
+the eleventh counts as 11. `legend` says what each position means, which is what makes that number readable.
+
+## Coming from Jev
+
+A client written against that API reaches this service by changing the base URL. Everything it
+sends is understood and everything it reads is there. Four differences, all of them in what is
+accepted rather than in what comes back:
+
+| | Jev | here |
+|---|---|---|
+| `choice` options | up to 255 | up to 26 — a request with more is refused, because a mark has to be one token |
+| `score` levels | up to 10 | up to 36 accepted, 10 recommended |
+| `usage.output_tokens` | counts the answer | always 0: nothing is generated |
+| rate limits | `429`, `529` | a service of your own has none |
+
+A question with no `criteria` is answered against the wording in `prompt.json` rather than
+refused, the state limit is the same 32768 tokens, and `model` is accepted and ignored, so
+`"model": "jev-latest"` does no harm. What is added: the question type `tfu`, `logits` on every
+answer, and `calibration` on the body.
 
 ## Errors
 

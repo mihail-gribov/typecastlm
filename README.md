@@ -8,7 +8,7 @@ numbers back. Four modes:
 | **`noul`** | yes or no, two criteria | `p(yes)`, a softmax over those two answers |
 | **`tfu`** | the same question | one distribution over `true`, `false`, **`unsure`** |
 | **`choice`** | 2–26 options, one correct | a probability per option |
-| **`scale`** | an ordinal rubric, up to 10 levels | a probability per level |
+| **`scale`** | an ordinal rubric, 10 levels or fewer | a probability per level |
 
 Three of them — `noul`, `choice` and `scale` — carry Jev's names, Jev's arguments and Jev's
 fields, so calling code written against that interface keeps its shape. The fourth, `tfu`, is
@@ -162,8 +162,14 @@ r.score       # 2.75   — the mean level, which is where an ordinal answer real
 ```
 
 Levels are ordered, and each is marked with its own digit when that digit is a single character,
-otherwise with the next mark from `0…9ABC…`. `score` averages the levels by their probabilities,
-so a rubric of three levels answers between 0 and 2 and can land at 1.05. Ten levels is the practical limit; past that the
+otherwise with the next mark from `0…9ABC…`. `score` averages the levels by their positions and
+their probabilities, so a rubric of three levels answers between 0 and 2 and can land at 1.05; the
+mark itself never enters the arithmetic, which is why a level marked `A` because it is the
+eleventh counts as 11.
+
+Ten levels is the recommendation, and what Jev enforces. Up to 36 are accepted here, since the
+marks run `0…9` and then `A…Z` — but past nine the reading degrades badly (0.05 accuracy on levels
+10–14 against 0.215 on 0–9), so more levels buy a finer number, not a better one. Ten levels is the practical limit; past that the
 marks are read worse than the rubric is written. Nothing in the reading enforces the order, so a
 distribution with two separated peaks is possible and means the rubric is being read as categories.
 
