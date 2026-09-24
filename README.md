@@ -1,7 +1,12 @@
 # typecastlm
 
-**A client for a Jev-class decision model with open weights.** Ask a document a question, get
-numbers back. Four modes:
+**A client for a Jev-class decision model with open weights.** Ask a document a closed question,
+get a probability back — no prose, no tokens generated, one forward pass. Jev is TypeSafe's closed
+model for exactly this; a Jev-class model answers the same shapes of question, and this one does
+it from weights you can download and run. Route a ticket, filter a feed, screen what reaches an
+agent, rate a review: anything where a program needs a number rather than a paragraph.
+
+Four modes:
 
 | mode | the question | the answer |
 |---|---|---|
@@ -27,15 +32,16 @@ Why this one:
 * **Fast** — p50 48 ms on material under 200 tokens and 566 ms at 1000–4000, on a 16 GB consumer
   card: nothing is generated, so a decision is one forward pass and no tokens written.
 * **A third answer.** Two-answer readers must call something a yes; this one does not have to.
-* **Calibrated per mode** — one temperature per mode ships with the weights and is applied here;
-  calibration error 0.011–0.052.
+* **Calibrated per mode** — a stated 0.8 comes out right about 80 % of the time, because each
+  mode carries its own temperature, fitted and shipped with the weights (calibration error
+  0.011–0.052, and refittable on your own rows).
 * **Yours to run** — open weights, one command for a local service, and a client with a single
   dependency for whatever talks to it.
 
 ## Install
 
-There is no hosted endpoint: the weights are open and the service is yours to run. Three ways,
-differing in where the model sits.
+There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
+newer, and three ways to arrange it, differing in where the model sits.
 
 **Behind HTTP on this machine** — one command, and `Client()` finds it:
 
@@ -66,8 +72,8 @@ export TYPECASTLM_ENDPOINT=https://your-service
 export TYPECASTLM_API_KEY=…               # only if your service asks for one
 ```
 
-The first two download 7.5 GB of weights once and run them on a GPU; the numbers below were taken
-on a 16 GB consumer card. On CUDA, add the kernels the hybrid trunk wants — without them it falls
+The first two download the checkpoint once — 7.5 GB, 3.8B parameters, derived from Qwen3.5-4B —
+and run it on a GPU; the numbers below were taken on a 16 GB consumer card. On CUDA, add the kernels the hybrid trunk wants — without them it falls
 back to a slow path and p50 triples:
 
 ```
@@ -88,6 +94,9 @@ a = c.noul(open("page.html").read(),
 a.prob       # 0.95  — probability of `true` between the two answers that decide the question
 a.margin     # +2.94 — the same reading as log-odds, so a saturated probability still ranks
 ```
+
+Criteria carry the meaning, so write them as descriptions of the material rather than as
+instructions to a model. The other three modes are below.
 
 ## Modes
 
