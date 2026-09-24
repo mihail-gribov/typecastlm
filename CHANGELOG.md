@@ -37,6 +37,10 @@ Jev's, field for field.
 
 **Fixed**
 
+- `TYPECASTLM_ENDPOINT=http://localhost:8000` — the address anyone writes after starting the
+  service — posted to the bare host and got a 404: the client never added the route. A host
+  without a path now gets `/v1/systemone`; an endpoint that carries a path of its own is left
+  alone, since a gateway may mount the service anywhere.
 - The marks mode read the wrong row and asked the wrong question. A mark appears as `" A"` and as
   `"A"`, and the reading takes the stronger of the two — which is what the temperatures were
   fitted with, and what the head could not express, since it carries one row per mark. The

@@ -123,9 +123,8 @@ t.confidence  # 0.81
 ```
 
 The same two criteria and the same forward pass as `noul`, softmaxed over three answers instead
-of two, so here the third competes with the other two. Use it where
-"nothing here decides it" is an answer you act on, and `noul` where you need a number comparable
-with a two-answer detector. There is no third criterion to write: `unsure` is what is left when
+of two, so here the third competes with the other two. Use it where "nothing here decides it" is
+an answer you act on, and `noul` where you need a number comparable with a two-answer detector. There is no third criterion to write: `unsure` is what is left when
 neither of the two fits.
 
 ### `choice` — one of 2 to 26 options
@@ -158,7 +157,7 @@ r = c.scale(review, "How positive is this review overall?",
 
 r.p           # {'0': 0.06, '1': 0.08, '2': 0.11, '3': 0.54, '4': 0.20}
 r.verdict     # '3'    — the level that leads
-r.score       # 2.75   — the mean level, which is where an ordinal answer really sits
+r.score       # 2.72   — the mean level, which is where an ordinal answer really sits
 ```
 
 Levels are ordered, and each is marked with its own digit when that digit is a single character,
@@ -169,9 +168,9 @@ eleventh counts as 11.
 
 Ten levels is the recommendation, and what Jev enforces. Up to 36 are accepted here, since the
 marks run `0…9` and then `A…Z` — but past nine the reading degrades badly (0.05 accuracy on levels
-10–14 against 0.215 on 0–9), so more levels buy a finer number, not a better one. Ten levels is the practical limit; past that the
-marks are read worse than the rubric is written. Nothing in the reading enforces the order, so a
-distribution with two separated peaks is possible and means the rubric is being read as categories.
+10–14 against 0.215 on 0–9), so more levels buy a finer number, not a better one. Nothing in the
+reading enforces the order either, so a distribution with two separated peaks is possible and
+means the rubric is being read as categories.
 
 ### The same modes in this process
 

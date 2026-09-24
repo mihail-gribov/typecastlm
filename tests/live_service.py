@@ -36,7 +36,7 @@ print("health:", {k: h[k] for k in ("model", "device", "prompt", "auth", "checks
 check("health lists the head", len(h["labels"]) >= 29, f"({len(h['labels'])} labels)")
 check("health says whether auth is on", isinstance(h["auth"], bool))
 
-c = Client(endpoint=f"{BASE}/v1/systemone", api_key=KEY)
+c = Client(endpoint=BASE, api_key=KEY)      # the bare host: the client adds the route
 
 a = c.noul(DOC, "Is the claim covered by this policy?",
            true="the policy covers it", false="the policy excludes it")

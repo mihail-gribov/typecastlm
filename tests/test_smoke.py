@@ -40,6 +40,18 @@ def _client(logits, kind="noul"):
     return c
 
 
+def test_a_bare_host_gets_the_route():
+    """`TYPECASTLM_ENDPOINT=http://localhost:8000` is what anyone writes after starting the
+    service. Posting to the bare host answers 404, so the client adds the route itself."""
+    from typecastlm.remote import ROUTE, _route
+
+    assert _route("http://localhost:8000") == "http://localhost:8000" + ROUTE
+    assert _route("http://localhost:8000/") == "http://localhost:8000" + ROUTE
+    assert _route("https://gw.example.com/typecast" + ROUTE) == \
+        "https://gw.example.com/typecast" + ROUTE      # a path of its own is left alone
+    assert _route("") == ""
+
+
 def test_noul_is_a_softmax_over_two_answers():
     """The third output is another mode's, read at another temperature. It must not leak in."""
     z = {"true": 2.2, "false": 0.7, "unsure": 9.9}     # a third answer loud enough to be noticed

@@ -225,7 +225,7 @@ class Reader:
                                                 enable_thinking=False)
         except TypeError:
             text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-        return text + "Answer: "
+        return text + self.prompt_cfg["tail"]
 
     def answer_many(self, state: str, questions: dict) -> tuple[dict, int]:
         """Answer several questions about one state.

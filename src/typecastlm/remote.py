@@ -22,6 +22,21 @@ from dataclasses import dataclass
 
 DEFAULT_ENDPOINT = ""          # no hosted service; set one or run `typecastlm-serve`
 RETRY_CODES = (408, 429, 500, 502, 503, 504, 529)
+ROUTE = "/v1/systemone"
+
+
+def _route(endpoint: str) -> str:
+    """A host without a path gets the route added.
+
+    `TYPECASTLM_ENDPOINT=http://localhost:8000` is what anyone writes after starting the service,
+    and posting to the bare host answers 404. An endpoint that already carries a path is left
+    alone: a gateway may mount the service anywhere.
+    """
+    e = (endpoint or "").rstrip("/")
+    if not e:
+        return ""
+    rest = e.split("://", 1)[-1]
+    return e if "/" in rest else e + ROUTE
 
 
 @dataclass
@@ -87,7 +102,8 @@ class Client:
         import requests
         from requests.adapters import HTTPAdapter
 
-        self.endpoint = endpoint or os.environ.get("TYPECASTLM_ENDPOINT", DEFAULT_ENDPOINT)
+        self.endpoint = _route(endpoint or os.environ.get("TYPECASTLM_ENDPOINT",
+                                                          DEFAULT_ENDPOINT))
         if not self.endpoint:
             raise ValueError(
                 "no endpoint. Pass Client(endpoint=...), set TYPECASTLM_ENDPOINT, or run the "
