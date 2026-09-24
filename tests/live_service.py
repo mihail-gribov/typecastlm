@@ -36,7 +36,9 @@ print("health:", {k: h[k] for k in ("model", "device", "prompt", "auth", "checks
 check("health lists the head", len(h["labels"]) >= 29, f"({len(h['labels'])} labels)")
 check("health says whether auth is on", isinstance(h["auth"], bool))
 
-c = Client(endpoint=BASE, api_key=KEY)      # the bare host: the client adds the route
+# The bare host: the client adds the route. The timeout is generous because on a CPU one
+# decision is ten seconds, and a retry on a timeout would only queue the same work twice.
+c = Client(endpoint=BASE, api_key=KEY, timeout=float(os.environ.get("TYPECASTLM_TIMEOUT", "120")))
 
 a = c.noul(DOC, "Is the claim covered by this policy?",
            true="the policy covers it", false="the policy excludes it")
@@ -93,6 +95,36 @@ check("old route still answers",
                     json={"state": "x", "questions": {"q": {"type": "noul",
                           "instructions": "?", "criteria": {"true": "a", "false": "b"}}}}
                     ).status_code == 200)
+
+# the rest of the API it copies
+m = requests.get(f"{BASE}/v1/models", headers={"Authorization": f"Bearer {KEY}"}).json()
+check("models lists the checkpoint and its alias",
+      {x["name"] for x in m["models"]} >= {h["name"], "typecastlm-latest"}
+      and all({"name", "description", "release_date"} <= set(x) for x in m["models"]),
+      str([x["name"] for x in m["models"]]))
+check("models needs the key", requests.get(f"{BASE}/v1/models").status_code == 401)
+check("the answer names the checkpoint, not a path", "/" not in raw["model"], raw["model"])
+loose = requests.post(f"{BASE}/v1/systemone", headers={"Authorization": f"Bearer {KEY}"},
+                      json={"state": {"subject": "Duplicate charge", "body": "Charged twice."},
+                            "questions": {
+                                "topic": {"type": "choice",
+                                          "instructions": {"task": "What is this about?"},
+                                          "criteria": {"billing": None, "shipping": None}},
+                                "spam": {"type": "noul", "instructions": "Is this spam?"}}})
+check("object state, object instructions, nameless options", loose.status_code == 200,
+      f"got {loose.status_code} {loose.text[:120]}")
+if loose.status_code == 200:
+    check("nameless options are read by name", loose.json()["answers"]["topic"]["choice"] == "billing",
+          str(loose.json()["answers"]["topic"]["probabilities"]))
+bad = requests.post(f"{BASE}/v1/systemone", headers={"Authorization": f"Bearer {KEY}"},
+                    json={"state": "x", "questions": {"ok": {"type": "noul", "instructions": "?"},
+                                                      "broken": {"type": "choice",
+                                                                 "criteria": {"one": "a"}}}})
+check("a refused question is named in loc", bad.status_code == 422
+      and bad.json()["detail"][0]["loc"][:3] == ["body", "questions", "broken"],
+      bad.text[:160])
+check("responses carry a request id",
+      "X-Request-Id" in requests.get(f"{BASE}/health").headers)
 
 # refusals
 check("401 without the key",

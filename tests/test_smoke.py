@@ -142,3 +142,79 @@ def test_the_shape_check_is_written_down():
     expected = next(n for n in reader.body
                     if isinstance(n, ast.Assign) and n.targets[0].id == "EXPECTED")
     assert [c.value for c in expected.value.elts] == ["true", "false", "unsure"]
+
+
+def test_every_field_the_api_allows_becomes_text():
+    """The Jev API takes a string, an object, an array or nothing wherever prose goes. An object
+    is read as JSON, nothing as an empty string — never a 500."""
+    from typecastlm.server import Reader
+
+    assert Reader.as_text("plain") == "plain"
+    assert Reader.as_text(None) == ""
+    assert Reader.as_text({"task": "spam?"}) == '{"task": "spam?"}'
+    assert Reader.as_text(["a", 1]) == '["a", 1]'
+    assert Reader.as_text({"é": "ü"}) == '{"é": "ü"}'      # not escaped: the model reads it
+
+
+def test_the_answer_names_the_checkpoint_never_a_path():
+    from typecastlm.server import short_name
+
+    assert short_name("mihailgribov/typecastlm-qwen3.5-3.8b") == "typecastlm-qwen3.5-3.8b"
+    assert short_name("/models/typecastlm/") == "typecastlm"
+    assert short_name("typecastlm") == "typecastlm"
+
+
+def test_the_line_for_the_model_has_an_end():
+    """One request holds the model; `queue` may wait; the next is told to come back, with a
+    Retry-After of the line's length times the average request."""
+    import threading
+
+    from typecastlm.server import Busy, Gate
+
+    g = Gate(queue=1)
+    with g:                                     # 1 running
+        assert g.load()["busy"] and g.load()["waiting"] == 0
+        started, release = threading.Event(), threading.Event()
+
+        def waiter():
+            with g:
+                pass
+
+        with g._mu:                             # a second one, counted as waiting
+            g.inflight += 1
+        with pytest.raises(Busy) as e:          # the third is one too many
+            with g:
+                pass
+        assert e.value.wait >= 1
+        with g._mu:
+            g.inflight -= 1
+    assert not g.load()["busy"] and g.load()["served"] == 1
+    with g:                                     # the lock was released
+        pass
+    assert g.load()["served"] == 2 and g.load()["avg_ms"] >= 0
+
+
+def test_flags_read_the_environment(monkeypatch):
+    """The container runs `typecastlm-serve` with no arguments: everything comes from
+    TYPECASTLM_*. An empty variable counts as unset, so a compose file may pass them all."""
+    from typecastlm.server import env
+
+    monkeypatch.setenv("TYPECASTLM_PORT", "8077")
+    monkeypatch.setenv("TYPECASTLM_API_KEY", "")
+    assert env("PORT", "8000") == "8077"
+    assert env("API_KEY", "") == ""
+    assert env("QUEUE", "32") == "32"
+
+
+def test_a_refused_question_carries_its_key():
+    """A bundle of twenty is refused with the one that is wrong, not with 'a question'."""
+    from typecastlm.server import QuestionError, Reader
+
+    r = object.__new__(Reader)
+    r.answer = lambda state, q: (_ for _ in ()).throw(ValueError("bad"))
+    with pytest.raises(QuestionError) as e:
+        r.answer_many("s", {"fine": {"type": "noul"}})
+    assert e.value.key == "fine" and str(e.value) == "bad"
+    with pytest.raises(QuestionError) as e:
+        r.answer_many("s", {"broken": "not an object"})
+    assert e.value.key == "broken"

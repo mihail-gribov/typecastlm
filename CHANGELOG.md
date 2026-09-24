@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.2.0 — unreleased
+
+The service grows into a deployment, and the rest of the Jev API arrives.
+
+**Added**
+
+- A Docker image and a compose file: `docker compose up -d --build` serves the API on a GPU host
+  with the libraries pinned to the versions the numbers were measured with, and the weights in a
+  volume that survives rebuilds. A second compose layer runs the same image on a CPU. The whole
+  of it is in `docs/DOCKER.md`.
+- `GET /v1/models`, behind the same key, listing the checkpoint and the alias
+  `typecastlm-latest` in the shape that API gives a model.
+- Every `typecastlm-serve` flag is also `TYPECASTLM_<FLAG>` in the environment; the container is
+  configured that way and runs the command with no arguments.
+- The model answers one request at a time and the rest wait, up to `--queue` of them (32); past
+  that the service says `529` with `Retry-After`, which the client already retried on.
+- `instructions` and criterion descriptions take a string, an object, an array or nothing, as
+  the Jev API allows: an option without a description is read by its name alone. Until now an
+  object was a `500` and a missing description a `TypeError`.
+- A `422` for a question that cannot be asked now names it: `detail` is the list FastAPI gives a
+  malformed body, with the question's key in `loc`, so a bundle of twenty is refused with the one
+  that is wrong.
+- `X-Request-Id` and `X-Process-Time-Ms` on every response; `/health` reports dtype, version and
+  the queue's load.
+
+**Changed**
+
+- The answer's `model` is the checkpoint's short name (`typecastlm-qwen3.5-3.8b`), never a
+  filesystem path, whichever way the weights were loaded.
+- `--api-key` takes several tokens separated by commas.
+- `transformers>=5` in the `local` and `server` extras: the checkpoint's tokenizer is saved in
+  its format and 4.x cannot load it. `jinja2` and `accelerate` are listed too, since transformers
+  stopped pulling the first in and the second is what `device_map` wants.
+
+**Fixed**
+
+- On a CPU with `flash-linear-attention` installed the trunk called its Triton kernels and failed
+  with `0 active drivers`. The service now hides the package when it is not on CUDA, and the same
+  image serves both.
+
 ## 1.1.2
 
 **Fixed**

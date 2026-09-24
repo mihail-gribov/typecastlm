@@ -11,9 +11,15 @@ cached, and the prompt comes with them (`prompt.json` beside the weights). That 
 the wording and the weights were measured together, and keeping the wording here instead would let
 the two drift apart.
 
-The body and the answer are the Jev API's, field for field, so a client written against that
-interface reaches this service by changing the base URL. Added rather than changed: the question
-type `tfu`, `logits` on every answer, and the checkpoint's `calibration` on the body.
+Every flag has an environment variable of the same name under `TYPECASTLM_` (`TYPECASTLM_MODEL`,
+`TYPECASTLM_PORT`, `TYPECASTLM_API_KEY`, …), which is how the Docker image is configured: the
+container runs `typecastlm-serve` with no arguments and reads its environment.
+
+The routes, the request body, the answer objects and the error codes are the Jev API's, field for
+field, so a client written against that interface reaches this service by changing the base URL:
+`POST /v1/systemone` answers questions, `GET /v1/models` names the checkpoint, a bearer token
+guards both. Added rather than changed: the question type `tfu`, `logits` on every answer, the
+checkpoint's `calibration` on the body, and `/health` for the deployment itself.
 
     POST /v1/systemone
     {"state": "...", "questions": {"is_urgent": {"type": "noul", "instructions": "...",
@@ -28,13 +34,30 @@ The whole contract is in `docs/API.md`.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import math
 import os
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
+DEFAULT_QUEUE = 32
+
+
+def env(name: str, default=None) -> str | None:
+    """`TYPECASTLM_<NAME>`, or the default. Empty counts as unset, so a compose file may pass
+    every variable through and leave the ones it does not care about blank."""
+    return os.environ.get(f"TYPECASTLM_{name}") or default
+
+
+def short_name(model: str) -> str:
+    """The name a checkpoint answers under: the last path segment, so a Hub id and a directory
+    give the same word and the answer never carries a filesystem path."""
+    return model.rstrip("/").split("/")[-1] or model
 
 
 class Reader:
@@ -44,13 +67,18 @@ class Reader:
                  dtype: str = "bfloat16", max_state_tokens: int | None = None,
                  strict: bool = True, prompt: str | Path | None = None):
         import torch
+
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if not str(device).startswith("cuda"):
+            self._without_fla()
+
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         self.torch, self.name = torch, model
+        self.served = short_name(model)
         self.tok = AutoTokenizer.from_pretrained(model)
         self.tok.padding_side = "right"          # the head reads the rightmost non-pad token
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model, dtype=getattr(torch, dtype), device_map=device).eval()
         self.model.requires_grad_(False)
@@ -67,6 +95,20 @@ class Reader:
             raise ValueError(f"--max-state-tokens {self.max_state_tokens} is past what the model "
                              f"can attend to ({limit} positions)")
         self.check(strict=strict)
+
+    @staticmethod
+    def _without_fla() -> None:
+        """Off the GPU, the linear-attention kernels must stay out of sight.
+
+        `flash-linear-attention` is what makes the hybrid trunk fast on CUDA, and transformers
+        picks it up whenever the package can be imported. Its kernels are Triton, and on a CPU
+        tensor they fail with `0 active drivers` instead of falling back. Hiding the package
+        before transformers looks for it sends the trunk down its torch path, which is slow and
+        correct — the only kind of CPU service there is.
+        """
+        if sys.modules.get("fla") is not None and "fla" in sys.modules:
+            return                               # already imported: nothing to hide any more
+        sys.modules["fla"] = None                # find_spec() and import both answer "absent"
 
     EXPECTED = ("true", "false", "unsure")
     PROMPT_FIELDS = ("system", "format_two", "means_two", "body", "tail", "max_state_tokens")
@@ -143,6 +185,32 @@ class Reader:
                 f"{model} ships no prompt.json ({type(e).__name__}), and there is no default to "
                 f"fall back on: the wording is part of what was measured. Pass one with "
                 f"--prompt (see model/prompt.json in the typecastlm repository)") from e
+
+    def metadata(self) -> list[dict]:
+        """What `GET /v1/models` lists: the checkpoint under its own name, and the alias
+        `typecastlm-latest`, both in the shape the Jev API gives a model — name, description,
+        release date. A process serves one checkpoint, so the list has one model and one alias,
+        and a request naming either (or anything else) is answered by it.
+
+        The date is the checkpoint's `release_date` from `prompt.json` when it carries one, else
+        the day its `config.json` was written — a download date for a Hub checkpoint, which is
+        why the key is the honest source and the file date only the fallback.
+        """
+        date = self.prompt_cfg.get("release_date")
+        if not date:
+            try:
+                from transformers.utils import cached_file
+
+                stamp = Path(cached_file(self.name, "config.json")).stat().st_mtime
+                date = _dt.date.fromtimestamp(stamp).isoformat()
+            except Exception:                    # no config on disk: the date is unknown
+                date = "unknown"
+        base = self.prompt_cfg.get("base", "")
+        desc = ("Jev-class decision model with open weights: noul, tfu, choice and score, one "
+                "forward pass each" + (f"; derived from {base}" if base else "") + ".")
+        return [{"name": self.served, "description": desc, "release_date": date},
+                {"name": "typecastlm-latest", "release_date": date,
+                 "description": f"Alias of {self.served}, the one checkpoint this service holds."}]
 
     def build(self, state: str, instructions: str, true: str, false: str) -> str:
         C = self.prompt_cfg
@@ -231,11 +299,19 @@ class Reader:
         """Answer several questions about one state.
 
         Sharing the prefix across a hybrid trunk is not implemented yet, so the questions are
-        answered one by one and a bundle costs what asking them separately costs.
+        answered one by one and a bundle costs what asking them separately costs. A question
+        that cannot be asked names itself: the error carries the caller's key, so a bundle of
+        twenty is refused with the one that is wrong.
         """
         out, tokens = {}, 0
         for key, q in questions.items():
-            ans, t = self.answer(state, q)
+            if not isinstance(q, dict):
+                raise QuestionError(key, "a question is an object with `type`, `instructions` "
+                                         "and `criteria`")
+            try:
+                ans, t = self.answer(state, q)
+            except ValueError as e:
+                raise QuestionError(key, str(e)) from e
             out[key], tokens = ans, tokens + t
         return out, tokens
 
@@ -247,34 +323,46 @@ class Reader:
         return kind
 
     @staticmethod
-    def as_text(state) -> str:
-        """The material as text. An object or an array becomes JSON, which is what the readers
-        were measured on and what a caller sending structured state expects to be read."""
-        return state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
+    def as_text(value) -> str:
+        """A field as text. The API this follows takes a string, an object, an array or nothing
+        wherever prose is expected — the state, the instructions, a criterion — and a third of a
+        public benchmark's own items send objects. An object or an array becomes JSON, which is
+        what the readers were measured on; nothing becomes an empty string, for the caller to
+        decide what that means."""
+        if value is None:
+            return ""
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
     def prepare(self, state, q: dict) -> tuple[str, list[str], list[str] | None, dict]:
         """Prompt text, answer names, the marks that carry them if any, and the legend.
 
         `criteria` is a map of names to descriptions, and for `score` it may also be an ordered
         list, which is the form the Jev API documents; a list is read as levels 0, 1, 2 and so on.
+        A description may be missing — the API allows it — and then the name stands in for it:
+        a choice without a description is interpreted by its name alone. A yes/no question
+        without criteria is asked against the wording in `prompt.json`.
         """
         kind = self.kind_of(q)
         state = self.as_text(state)
-        crit = q.get("criteria") or self.prompt_cfg.get("criteria_default", {})
+        ask = self.as_text(q.get("instructions"))
+        crit = q.get("criteria")
         if kind in ("noul", "tfu"):
-            if len(crit) != 2:
+            default = self.prompt_cfg.get("criteria_default", {})
+            crit = crit or default              # absent or empty: the shipped wording
+            if not isinstance(crit, dict) or len(crit) != 2:
                 raise ValueError("a yes/no question takes exactly two criteria; the third answer "
                                  "is read without being asked for")
-            t, f = list(crit.values())
-            return self.build(state, q["instructions"], t, f), list(self.EXPECTED), None, {}
+            t, f = [self.as_text(v) or default.get(str(k), str(k)) for k, v in crit.items()]
+            return self.build(state, ask, t, f), list(self.EXPECTED), None, {}
+        if crit is None:
+            raise ValueError(f"a {kind} question takes `criteria`: the options it chooses among")
         if isinstance(crit, (list, tuple)):
             crit = {str(i): d for i, d in enumerate(crit)}
-        if len(crit) < 2:
+        if not isinstance(crit, dict) or len(crit) < 2:
             raise ValueError(f"a {kind} question takes at least two options")
-        options = list(crit.items())
+        options = [(str(k), self.as_text(d) or str(k)) for k, d in crit.items()]
         marks = self.marks_for([k for k, _ in options], ordinal=(kind == "score"))
-        text = self.build_marks(state, q["instructions"], options, marks,
-                                ordinal=(kind == "score"))
+        text = self.build_marks(state, ask, options, marks, ordinal=(kind == "score"))
         return text, [k for k, _ in options], marks, dict(options)
 
     def _soft(self, logits: dict, mode: str) -> dict:
@@ -327,6 +415,67 @@ class Reader:
         return out, int(enc["attention_mask"].sum())
 
 
+class QuestionError(ValueError):
+    """A question that cannot be asked, and the key it was sent under."""
+
+    def __init__(self, key: str, msg: str):
+        super().__init__(msg)
+        self.key = key
+
+
+class Busy(Exception):
+    """The waiting room is full; `wait` is how many seconds to suggest."""
+
+    def __init__(self, wait: int):
+        super().__init__(f"try again in {wait} s")
+        self.wait = wait
+
+
+class Gate:
+    """One forward pass at a time, and a waiting room of a fixed size.
+
+    The model is one. Two requests on the GPU at once do not finish sooner than one after the
+    other — they compete for the same memory and the same cores — so a request holds the lock
+    for its forward passes and the others wait in line. The line has an end: past `queue` of
+    them, the next request is told to come back (529 with `Retry-After`) rather than queued
+    without limit, because a queue with no end is a latency with no bound and the client's
+    timeout fires anyway, after having done the work. `Retry-After` is the length of the line
+    times the average request, which is what the caller would have waited.
+    """
+
+    def __init__(self, queue: int = DEFAULT_QUEUE):
+        self.queue = max(0, int(queue))
+        self.lock = threading.Lock()             # held for the forward passes
+        self._mu = threading.Lock()              # guards the counters below
+        self.inflight = 0                        # running plus waiting
+        self.served = 0
+        self.avg = 0.0                           # seconds per request, an exponential mean
+
+    def __enter__(self):
+        with self._mu:
+            if self.inflight > self.queue:
+                raise Busy(max(1, math.ceil(self.inflight * (self.avg or 1.0))))
+            self.inflight += 1
+        self.lock.acquire()
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        dt = time.perf_counter() - self._t0
+        self.lock.release()
+        with self._mu:
+            self.inflight -= 1
+            self.served += 1
+            self.avg = dt if self.served == 1 else 0.9 * self.avg + 0.1 * dt
+        return False
+
+    def load(self) -> dict:
+        with self._mu:
+            return {"busy": self.lock.locked(), "waiting": max(0, self.inflight - 1),
+                    "queue": self.queue, "served": self.served,
+                    "avg_ms": round(self.avg * 1000, 1)}
+
+
 def _request_model():
     """The request body is declared at module level, not inside the factory.
 
@@ -347,43 +496,97 @@ def _request_model():
     return Ask
 
 
-def build_app(reader: Reader, api_key: str = ""):
+def _version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("typecastlm")
+    except Exception:                            # a source tree that is not installed
+        return "0"
+
+
+def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
+              queue: int = DEFAULT_QUEUE):
     """The Jev API, served from your own weights.
 
     The routes, the request body, the answer objects and the error codes are that API's; a client
     written against it reaches this service by changing the base URL. What is added rather than
-    changed: the question type `tfu`, a `logits` field on every answer, and the checkpoint's
-    `calibration` on the body.
+    changed: the question type `tfu`, a `logits` field on every answer, the checkpoint's
+    `calibration` on the body, and `/health`.
+
+    `api_key` is one token or several (a list, or one string with commas): any of them opens the
+    two `/v1` routes, and without any the service answers anyone who can reach the port.
+    `/health` never asks for a key — it says nothing a caller could not learn from the model card,
+    and an orchestrator has to be able to ask it.
     """
-    from fastapi import FastAPI, Header, HTTPException
+    from fastapi import FastAPI, Header, HTTPException, Request
+
+    keys = api_key.split(",") if isinstance(api_key, str) else list(api_key)
+    keys = {k.strip() for k in keys if k and k.strip()}
+    gate = Gate(queue)
 
     Ask = _request_model()
     globals()["Ask"] = Ask                     # so the string annotation resolves
-    app = FastAPI(title="typecastlm", version="1.1.2")
+    app = FastAPI(title="typecastlm", version=_version(),
+                  description="A Jev-class decision model behind the Jev API. Send the key as "
+                              "`Authorization: Bearer <key>` when the service asks for one.")
+
+    def authorize(header: str) -> None:
+        if keys and header.removeprefix("Bearer ").strip() not in keys:
+            raise HTTPException(401, "Missing or invalid API key. Check the `Authorization` "
+                                     "header.")
+
+    def refuse(msg: str, *loc) -> HTTPException:
+        # The shape FastAPI gives a body that does not parse, so a caller reads one form of 422
+        # whether the request was malformed or merely could not be asked.
+        return HTTPException(422, detail=[{"loc": ["body", *loc], "msg": msg,
+                                           "type": "value_error"}])
+
+    @app.middleware("http")
+    async def tag(request: Request, call_next):
+        # A request id ties a client's log line to the server's; the caller's is kept, one is
+        # minted otherwise. The timing is the whole request as the server saw it, queue included.
+        rid = request.headers.get("x-request-id") or uuid.uuid4().hex
+        t0 = time.perf_counter()
+        response = await call_next(request)
+        response.headers["X-Request-Id"] = rid
+        response.headers["X-Process-Time-Ms"] = f"{(time.perf_counter() - t0) * 1000:.1f}"
+        return response
 
     @app.get("/health")
     def health() -> dict:
-        return {"model": reader.name, "labels": reader.labels, "device": str(reader.device),
+        return {"model": reader.name, "name": reader.served, "labels": reader.labels,
+                "device": str(reader.device), "dtype": str(next(reader.model.parameters()).dtype),
                 "prompt": reader.prompt_source, "max_state_tokens": reader.max_state_tokens,
                 "calibration": reader.prompt_cfg.get("calibration", {}),
-                "auth": bool(api_key), "checks": reader.check(strict=False) or "ok"}
+                "auth": bool(keys), "load": gate.load(), "version": app.version,
+                "checks": reader.check(strict=False) or "ok"}
+
+    @app.get("/v1/models")
+    def models(authorization: str = Header(default="")) -> dict:
+        authorize(authorization)
+        return {"models": reader.metadata()}
 
     @app.post("/v1/systemone")
     @app.post("/v1/typecast")                  # the name this service answered to in 1.0.0
     def systemone(req: "Ask", authorization: str = Header(default="")) -> dict:
-        if api_key and authorization.removeprefix("Bearer ").strip() != api_key:
-            raise HTTPException(401, "Missing or invalid API key. Check the `Authorization` "
-                                     "header.")
+        authorize(authorization)
         if not req.questions:
-            raise HTTPException(422, "no questions")
+            raise refuse("no questions", "questions")
         try:
-            answers, tokens = reader.answer_many(req.state, req.questions)
+            with gate:
+                answers, tokens = reader.answer_many(req.state, req.questions)
+        except Busy as e:
+            raise HTTPException(529, f"The service is at capacity ({gate.queue} waiting); "
+                                     f"{e}.", headers={"Retry-After": str(e.wait)}) from e
+        except QuestionError as e:
+            raise refuse(str(e), "questions", e.key) from e
         except ValueError as e:
-            raise HTTPException(422, str(e)) from e
+            raise refuse(str(e)) from e
         # `model`, `answers` and `usage` are the Jev body. `calibration` is ours: it belongs to the
         # checkpoint, and a client should not have to guess the temperature its numbers were read
         # at. Nothing is generated here, so `output_tokens` is zero and stays zero.
-        return {"model": reader.name, "answers": answers,
+        return {"model": reader.served, "answers": answers,
                 "usage": {"input_tokens": tokens, "output_tokens": 0},
                 "calibration": reader.prompt_cfg.get("calibration", {})}
 
@@ -391,21 +594,29 @@ def build_app(reader: Reader, api_key: str = ""):
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="typecastlm-serve")
-    ap.add_argument("--model", default=DEFAULT_MODEL, help="repo id on the Hub, or a directory")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--dtype", default="bfloat16")
-    ap.add_argument("--max-state-tokens", type=int, default=None,
+    ap = argparse.ArgumentParser(
+        prog="typecastlm-serve",
+        description="Serve the Jev API from your own weights. Every flag can also be set as "
+                    "TYPECASTLM_<FLAG> in the environment, which is how the Docker image runs.")
+    ap.add_argument("--model", default=env("MODEL", DEFAULT_MODEL),
+                    help="repo id on the Hub, or a directory")
+    ap.add_argument("--host", default=env("HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int, default=int(env("PORT", "8000")))
+    ap.add_argument("--device", default=env("DEVICE", "auto"))
+    ap.add_argument("--dtype", default=env("DTYPE", "bfloat16"))
+    ap.add_argument("--max-state-tokens", type=int,
+                    default=int(env("MAX_STATE_TOKENS", "0")) or None,
                     help="how many state tokens to read in full; longer states are folded in the middle")
-    ap.add_argument("--prompt", default=None,
+    ap.add_argument("--prompt", default=env("PROMPT"),
                     help="your own template instead of the one shipped with the weights (same fields)")
-    ap.add_argument("--no-strict", action="store_true",
+    ap.add_argument("--no-strict", action="store_true", default=bool(env("NO_STRICT")),
                     help="serve a mismatched checkpoint anyway — for debugging only")
-    ap.add_argument("--api-key", default=os.environ.get("TYPECASTLM_API_KEY", ""),
-                    help="require this bearer token; without it the service answers anyone "
-                         "who can reach the port")
+    ap.add_argument("--api-key", default=env("API_KEY", ""),
+                    help="require this bearer token (several: separated by commas); without it "
+                         "the service answers anyone who can reach the port")
+    ap.add_argument("--queue", type=int, default=int(env("QUEUE", str(DEFAULT_QUEUE))),
+                    help="how many requests may wait for the model before the next one is told "
+                         "to retry (529 with Retry-After)")
     a = ap.parse_args(argv)
 
     try:
@@ -416,14 +627,17 @@ def main(argv: list[str] | None = None) -> int:
               "pip install \"typecastlm[local]\" and use typecastlm.Reader", file=sys.stderr)
         return 2
 
-    print(f"loading {a.model} …", flush=True)
+    print(f"typecastlm {_version()}: loading {a.model} …", flush=True)
+    t0 = time.perf_counter()
     reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,
                     prompt=a.prompt, max_state_tokens=a.max_state_tokens)
-    print(f"prompt: {reader.prompt_source}; context {reader.max_state_tokens} tokens",
-          flush=True)
+    print(f"loaded in {time.perf_counter() - t0:.1f} s; prompt: {reader.prompt_source}; "
+          f"context {reader.max_state_tokens} tokens", flush=True)
     print(f"checks: {reader.check(strict=False) or 'ok'}", flush=True)
-    print(f"ready on {a.host}:{a.port}; labels {reader.labels}; device {reader.device}", flush=True)
-    uvicorn.run(build_app(reader, api_key=a.api_key), host=a.host, port=a.port,
+    print(f"ready on {a.host}:{a.port} as {reader.served}; {len(reader.labels)} labels; "
+          f"device {reader.device}; auth {'on' if a.api_key else 'OFF'}; queue {a.queue}",
+          flush=True)
+    uvicorn.run(build_app(reader, api_key=a.api_key, queue=a.queue), host=a.host, port=a.port,
                 log_level="info")
     return 0
 

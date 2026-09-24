@@ -1,0 +1,9 @@
+# Layered over docker-compose.yml for a host without a GPU: drops the device reservation and
+# pins the service to the CPU, where a decision takes seconds instead of milliseconds.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
+services:
+  typecastlm:
+    deploy: !reset {}
+    environment:
+      TYPECASTLM_DEVICE: cpu

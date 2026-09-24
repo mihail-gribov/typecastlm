@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "typecastlm"
-version = "1.1.2"
+version = "1.2.0"
 description = "Client for a Jev-class decision model with open weights: the same noul, choice and score interface, plus a fourth mode that answers yes, no, or nothing here decides it"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,18 +26,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Running the model in your own process. The client needs none of this.
+# Running the model in your own process. The client needs none of this. transformers 5 is the
+# floor because the checkpoint's tokenizer is saved in its format; jinja2 renders the chat
+# template, which transformers no longer pulls in by itself.
 local = [
     "torch>=2.2",
-    "transformers>=4.51",
+    "transformers>=5.0",
     "huggingface-hub>=0.24",
+    "accelerate>=1.0",
+    "jinja2>=3.1",
 ]
 # Everything heavy lives here and only here: the server holds the weights, the client
 # knows nothing about them.
 server = [
     "torch>=2.2",
-    "transformers>=4.51",
+    "transformers>=5.0",
     "huggingface-hub>=0.24",
+    "accelerate>=1.0",
+    "jinja2>=3.1",
     "fastapi>=0.110",
     "uvicorn>=0.27",
 ]

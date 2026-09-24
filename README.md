@@ -41,7 +41,18 @@ Why this one:
 ## Install
 
 There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
-newer, and three ways to arrange it, differing in where the model sits.
+newer, and four ways to arrange it, differing in where the model sits.
+
+**In a container** — the service with its libraries pinned and the weights in a volume:
+
+```
+git clone https://github.com/mihail-gribov/typecastlm && cd typecastlm
+docker compose up -d --build
+export TYPECASTLM_ENDPOINT=http://localhost:8000
+```
+
+A GPU host needs `nvidia-container-toolkit`; a host without a GPU adds
+`-f docker-compose.cpu.yml`. Keys, ports, your own weights: [docs/DOCKER.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md).
 
 **Behind HTTP on this machine** — one command, and `Client()` finds it:
 
@@ -290,6 +301,12 @@ in the [API reference](https://github.com/mihail-gribov/typecastlm/blob/main/doc
 `--api-key` requires a bearer token; without it the service answers anyone who can reach the port.
 The prompt travels with the weights, `--prompt` replaces the wording the model was measured with,
 and `/health` reports which wording is in use so a changed one is visible rather than assumed.
+`GET /v1/models` names the checkpoint the way that API does, and every flag is also an environment
+variable — `TYPECASTLM_MODEL`, `TYPECASTLM_API_KEY`, `TYPECASTLM_PORT` — which is how the
+[Docker image](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md) is configured.
+
+The model answers one request at a time and the rest wait, up to `--queue` of them (32); past
+that the service says `529` with `Retry-After`, and the client retries with the header honoured.
 
 ## Using the model without any of this
 

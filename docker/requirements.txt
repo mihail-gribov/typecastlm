@@ -1,0 +1,22 @@
+# The versions the service was measured and released with. Every line is a pin on purpose: the
+# image is rebuilt often and the model is not, and a torch or transformers that moved under it
+# would change the numbers without changing the checkpoint. Bump them together, then rerun
+# tests/live_service.py against the container before shipping.
+#
+# torch from PyPI carries CUDA 12.8 and runs on Blackwell (sm_120) and older; the container needs
+# only the host driver through nvidia-container-toolkit.
+torch==2.10.0
+transformers==5.3.0
+huggingface-hub==1.7.1
+accelerate==1.13.0
+safetensors==0.7.0
+tokenizers==0.22.2
+jinja2>=3.1
+einops==0.8.2
+# The linear-attention kernels the hybrid trunk wants on CUDA; without them p50 triples.
+# Off the GPU the service hides them, so the same image serves a CPU too.
+fla-core==0.5.2
+flash-linear-attention==0.5.2
+fastapi==0.140.0
+uvicorn==0.51.0
+requests==2.32.5

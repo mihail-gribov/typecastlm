@@ -15,16 +15,37 @@ Authorization: Bearer <key>        # required when the service was started with 
 
 `/v1/typecast` is the same route under the name this service answered to in 1.0.0.
 
-`GET /health` reports the model, its labels, the device, the prompt in use, the state limit and
-the calibration, and is the place to check that a deployment is the one your numbers came from.
+`GET /v1/models`, behind the same key, lists what a request may name in `model`: the checkpoint
+under its own name and the alias `typecastlm-latest`, each with a description and a release date,
+the way the Jev API lists its models. A process serves one checkpoint, so the list is that one
+and its alias, and a request naming anything else is answered by it anyway.
+
+```json
+{"models": [{"name": "typecastlm-qwen3.5-3.8b", "release_date": "2026-09-24",
+             "description": "Jev-class decision model with open weights: noul, tfu, choice and score, one forward pass each; derived from Qwen/Qwen3.5-4B."},
+            {"name": "typecastlm-latest", "release_date": "2026-09-24",
+             "description": "Alias of typecastlm-qwen3.5-3.8b, the one checkpoint this service holds."}]}
+```
+
+`GET /health`, with no key, reports the model, its labels, the device and dtype, the prompt in
+use, the state limit, the calibration and the queue, and is the place to check that a deployment
+is the one your numbers came from.
+
+Every response carries `X-Request-Id` — yours if the request sent one — and `X-Process-Time-Ms`,
+the whole request as the server saw it, waiting included.
 
 ## Request body
 
 | field | type | |
 |---|---|---|
-| `state` | string | required — the material every question is asked about |
+| `state` | string, object or array | required — the material every question is asked about; an object or an array is read as JSON |
 | `questions` | object | required — a map of your keys to question objects; answers come back under the same keys |
 | `model` | string | optional and ignored — a process serves one checkpoint, and the answer names it |
+
+Inside a question, `instructions` and every criterion description take the same three forms as
+`state` — a string, an object or an array — and may be omitted, as that API allows: a choice or a
+level without a description is read by its name alone, and a yes/no question without criteria is
+asked against the wording in `prompt.json`.
 
 Answers come back under your keys, in one body, however many questions the call carries.
 
@@ -178,7 +199,7 @@ accepted rather than in what comes back:
 | `choice` options | up to 255 | up to 26 — a request with more is refused, because a mark has to be one token |
 | `score` levels | up to 10 | up to 36 accepted, 10 recommended |
 | `usage.output_tokens` | counts the answer | always 0: nothing is generated |
-| rate limits | `429`, `529` | a service of your own has none |
+| rate limits | `429`, `529` | no `429`: nothing is metered. `529` when the line for the model is full, with `Retry-After` |
 
 A question with no `criteria` is answered against the wording in `prompt.json` rather than
 refused, the state limit is the same 32768 tokens, and `model` is accepted and ignored, so
@@ -191,8 +212,18 @@ answer, and `calibration` on the body.
 |---|---|
 | `401 Unauthorized` | the service was started with `--api-key` and the `Authorization` header does not carry it |
 | `422 Unprocessable Entity` | no questions; an unknown `type`; a yes/no question without exactly two criteria; a `choice` or `score` with fewer than two options; more options than there are single-token marks; a body that is not the shape above |
+| `529` | the model is busy and `--queue` requests are already waiting; `Retry-After` says when to come back, in seconds |
 | `500` | the model failed to answer |
 
-A service of your own has no rate limit, so `429` and `529` do not arise here; the bundled client
-retries them anyway, along with 408, 500, 502, 503 and 504, with exponential back-off and the
-`Retry-After` header honoured when one is sent.
+A `422` carries `detail` as a list, the shape the Jev API and FastAPI give a body that does not
+parse, and a question that cannot be asked is reported the same way with its key in `loc`:
+
+```json
+{"detail": [{"loc": ["body", "questions", "settle"],
+             "msg": "a choice question takes at least two options", "type": "value_error"}]}
+```
+
+The model answers one request at a time — two on the same GPU do not finish sooner than one
+after the other — so a service of your own has no `429` but does have a line, and `529` is what
+it says when the line is full. The bundled client retries it, along with 408, 429, 500, 502, 503
+and 504, with exponential back-off and the `Retry-After` header honoured when one is sent.
