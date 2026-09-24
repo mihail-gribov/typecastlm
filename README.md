@@ -274,7 +274,7 @@ and `/health` reports which wording is in use so a changed one is visible rather
 
 ## Using the model without any of this
 
-The checkpoint is an ordinary classifier with 29 outputs, so `transformers` loads it directly and
+The checkpoint is an ordinary classifier with 39 outputs, so `transformers` loads it directly and
 `reader.py` beside the weights reads all four modes. See the
 [model card](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b).
 

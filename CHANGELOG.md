@@ -22,9 +22,11 @@ Jev's, field for field.
 **Added**
 
 - `choice` takes up to 26 options, where it took 16. A mark is read by the model's own output row
-  for that token, which is what the head caches; past `mark_P` the reader and the service take the
-  row from the embedding instead and get the same number to the last bit. Through the plain
-  `text-classification` pipeline, which has no embedding to reach for, the ceiling is still 16.
+  for that token, which is what the head caches, so a mark the head lacks is still readable: the
+  reader and the service take the row from the embedding and get the same number to the last bit.
+  The checkpoint was repacked to carry all 26 letters as well, which is what the plain
+  `text-classification` pipeline reads, and split into shards so that the next change to the head
+  costs the 195 KB it weighs rather than 7.5 GB.
 - `score` accepts an ordered list of levels, the form the Jev API documents; a map still works and
   then its keys are what comes back.
 - `usage.output_tokens`, always 0 — nothing is generated.
