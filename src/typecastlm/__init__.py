@@ -28,9 +28,10 @@ Running the model in this process instead of calling a service:
     r.noul(document, "Is the claim supported?", true="…", false="…")
 """
 from .calibrate import calibrate
+from .embedding import EmbeddingReader
 from .remote import Answer, Choice, Client, Ternary
 
-__all__ = ["Client", "Answer", "Ternary", "Choice", "Reader", "calibrate"]
+__all__ = ["Client", "Answer", "Ternary", "Choice", "Reader", "EmbeddingReader", "calibrate"]
 
 
 def __getattr__(name: str):

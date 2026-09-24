@@ -139,7 +139,11 @@ def test_the_shape_check_is_written_down():
     reader = next(n for n in ast.walk(tree)
                   if isinstance(n, ast.ClassDef) and n.name == "Reader")
     assert any(isinstance(n, ast.FunctionDef) and n.name == "check" for n in reader.body)
-    expected = next(n for n in reader.body
+    # The three outputs are named once, in the reading both readers share.
+    tree = ast.parse((ROOT / "src/typecastlm/reading.py").read_text(encoding="utf-8"))
+    reading = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.ClassDef) and n.name == "Reading")
+    expected = next(n for n in reading.body
                     if isinstance(n, ast.Assign) and n.targets[0].id == "EXPECTED")
     assert [c.value for c in expected.value.elts] == ["true", "false", "unsure"]
 
@@ -255,3 +259,65 @@ def test_the_request_schema_takes_what_the_api_it_copies_takes():
         SystemOneRequest(state="x", questions={"q": {"type": "guess"}})  # not a type
     with pytest.raises(ValueError):
         SystemOneRequest(state="x", questions={"q": {"type": "choice"}})  # options missing
+
+
+def _embedding_reader(vector):
+    """An EmbeddingReader with no server: the prompt and head from the model checkout beside
+    us, and a vector supplied by the test."""
+    from typecastlm.embedding import EmbeddingReader
+
+    r = object.__new__(EmbeddingReader)
+    r.prompt_cfg = json.loads((MODEL / "prompt.json").read_text(encoding="utf-8"))
+    r.rows = {"true": [[1.0, 0.0, 0.0]], "false": [[0.0, 1.0, 0.0]], "unsure": [[0.0, 0.0, 1.0]],
+              "mark_A": [[1.0, 0.0, 0.0], [0.5, 0.0, 0.0]], "mark_B": [[0.0, 1.0, 0.0]],
+              "mark_C": [[0.0, 0.0, 1.0]]}
+    r.hidden, r.frame, r.max_state_tokens = 3, r.prompt_cfg.get("chat_frame", ""), 100
+    from typecastlm.embedding import CHAT_FRAME
+
+    r.frame = r.frame or CHAT_FRAME
+    r.served, r.name, r.endpoint = "m", "m", "http://x"
+    r.vector = lambda text: vector
+    r.tokenize = lambda text: list(range(len(text.split())))
+    return r
+
+
+@pytest.mark.skipif(not (pathlib.Path(__file__).resolve().parents[2] / "model").is_dir(),
+                    reason="the model repository is not checked out beside the package")
+def test_the_launcher_reader_renders_the_measured_prompt():
+    """The chat frame is the tokenizer's rendering, verbatim: system, user, assistant with
+    thinking off and the generation prompt — then the tail. A prompt that differs by a character
+    is another model, so this is the string exactly."""
+    r = _embedding_reader([0.0, 0.0, 0.0])
+    text, keys, marks, _ = r.prepare("The pipe burst.", {
+        "type": "noul", "instructions": "Sudden?", "criteria": {"true": "sudden", "false": "slow"}})
+    assert text.startswith("<|im_start|>system\n" + r.prompt_cfg["system"] + "<|im_end|>\n"
+                           "<|im_start|>user\n" + r.prompt_cfg["format_two"])
+    assert text.endswith("<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+                         + r.prompt_cfg["tail"])
+    assert "<state>\nThe pipe burst.\n</state>" in text and marks is None
+    assert keys == ["true", "false", "unsure"]
+
+
+@pytest.mark.skipif(not (pathlib.Path(__file__).resolve().parents[2] / "model").is_dir(),
+                    reason="the model repository is not checked out beside the package")
+def test_the_launcher_reader_reads_the_head_like_the_service():
+    """39 dot products, the stronger surface form of a mark, the mode's temperature — and the
+    same answer body the service returns, so `Client(transport=…)` sees no difference."""
+    from typecastlm import Client
+
+    r = _embedding_reader([2.0, 0.5, -1.0])
+    cal = r.prompt_cfg["calibration"]
+    a, n = r.answer("s", {"type": "noul", "instructions": "?",
+                          "criteria": {"true": "a", "false": "b"}})
+    t = cal["verdict"]["temperature"]
+    assert a["logits"] == {"true": 2.0, "false": 0.5, "unsure": -1.0}
+    assert a["noul"] == pytest.approx(1 / (1 + math.exp(-(2.0 - 0.5) / t))) and n > 0
+    c, _ = r.answer("s", {"type": "choice", "instructions": "?",
+                          "criteria": {"x": "1", "y": "2", "z": "3"}})
+    assert c["choice"] == "x" and c["marks"] == {"x": "A", "y": "B", "z": "C"}
+    assert c["logits"]["x"] == 2.0                       # the stronger of A's two forms
+    body = r({"state": "s", "questions": {"q": {"type": "tfu", "instructions": "?"}}})
+    assert set(body) == {"model", "answers", "usage", "calibration"}
+    assert body["answers"]["q"]["type"] == "tfu" and body["usage"]["output_tokens"] == 0
+    v = Client(transport=r).noul("s", "?", true="a", false="b")
+    assert v.prob == pytest.approx(a["noul"]) and v.margin == pytest.approx((2.0 - 0.5) / t)

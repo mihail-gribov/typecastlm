@@ -94,16 +94,24 @@ class Client:
 
     def __init__(self, endpoint: str | None = None, api_key: str | None = None,
                  model: str = "typecastlm-qwen3.5-3.8b", timeout: float = 10.0, retries: int = 5,
-                 pool: int = 32, temperature: float | None = None, calibrated: bool = True):
+                 pool: int = 32, temperature: float | None = None, calibrated: bool = True,
+                 transport=None):
         """`temperature` overrides the checkpoint's per-mode temperatures; `calibrated=False`
         disables them. Temperatures are applied here because the service returns logits, so an
         answer can be re-read at another temperature without asking again. They change no
-        ordering, only confidence."""
+        ordering, only confidence.
+
+        `transport` replaces the service: a callable that takes a request body and returns the
+        answer body, such as `EmbeddingReader`, which reads the model through a llama-server.
+        The client is then the same object with the same methods, and no endpoint is needed."""
         import requests
         from requests.adapters import HTTPAdapter
 
+        self.transport = transport
         self.endpoint = _route(endpoint or os.environ.get("TYPECASTLM_ENDPOINT",
                                                           DEFAULT_ENDPOINT))
+        if transport is not None:
+            self.endpoint = self.endpoint or "transport"
         if not self.endpoint:
             raise ValueError(
                 "no endpoint. Pass Client(endpoint=...), set TYPECASTLM_ENDPOINT, or run the "
@@ -133,6 +141,10 @@ class Client:
         return float(((self.calibration or {}).get(mode) or {}).get("temperature", 1.0))
 
     def _post(self, body: dict) -> tuple[dict, float]:
+        if self.transport is not None:
+            t0 = time.perf_counter()
+            data = self.transport(body)
+            return data, (time.perf_counter() - t0) * 1000.0
         delay = 1.0
         for attempt in range(self.retries + 1):
             t0 = time.perf_counter()

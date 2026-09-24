@@ -7,6 +7,7 @@ Two repositories are published, and they hold different things.
 | this one | the package: client, service, reader, tests, docs | [PyPI](https://pypi.org/project/typecastlm/) and [GitHub](https://github.com/mihail-gribov/typecastlm) |
 | the model repository | the weights, and the few files that must sit beside them: the card, `reader.py`, `prompt.json` | [Hugging Face](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b) |
 | the image | the service with its libraries pinned, built from this repository by Actions on a release tag | [GHCR](https://github.com/mihail-gribov/typecastlm/pkgs/container/typecastlm) |
+| the GGUF files and `head.json` | the trunk for launchers and the head the client applies (`docs/LAUNCHERS.md`) | the model repository, beside the weights |
 
 Checked out side by side, which is what the scripts assume:
 
@@ -59,6 +60,11 @@ scripts/publish_hf.py -m "…"      # sync, commit, push
 
 The token comes from `HF_TOKEN` or from `HF_API_KEY` in the project's `.env`, and is used for the
 one push without being written into the clone's config.
+
+`head.json` is written by `scripts/export_head.py` from the checkpoint and committed to the
+clone like the other texts; the GGUF files are made by `scripts/convert_gguf.py` and
+`llama-quantize` and uploaded like weights, into a `gguf/` folder of the model repository.
+Before either ships, `tests/live_launcher.py` against a llama-server on the Q8_0 file.
 
 New weights are a separate matter: they are uploaded with `huggingface_hub.HfApi().upload_file`
 from wherever they were built, not from this working copy, which does not carry them.

@@ -32,6 +32,16 @@ The service grows into a deployment, and the rest of the Jev API arrives.
   and `latest`, built by `.github/workflows/docker.yml` on a release tag. The compose file pulls
   it and keeps `--build` as the way to build the same thing here.
 
+- The model under a launcher. The trunk converts to GGUF with the stock llama.cpp converter
+  (`scripts/convert_gguf.py`), the head is written as `head.json` (`scripts/export_head.py`),
+  and `EmbeddingReader` reads the model through a llama-server serving that GGUF as embeddings:
+  the prompt from `prompt.json`, the vector from the server, 39 dot products, the mode's
+  temperature. `Client(transport=EmbeddingReader(...))` is the same client with the same methods.
+  Against transformers, bf16 stays within 0.006 in probability and Q8_0 within 0.014, every
+  verdict the same; Ollama normalises its embeddings and is not a backend. `docs/LAUNCHERS.md`.
+- The prompt and the reading of logits moved into `typecastlm.reading`, shared by the service's
+  reader and the launcher's; `tests/same_reading.py` still agrees 4/4.
+
 **Changed**
 
 - The answer's `model` is the checkpoint's short name (`typecastlm-qwen3.5-3.8b`), never a

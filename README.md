@@ -41,7 +41,7 @@ Why this one:
 ## Install
 
 There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
-newer, and four ways to arrange it, differing in where the model sits.
+newer, and five ways to arrange it, differing in where the model sits.
 
 **In a container** — the published image, with its libraries pinned and the weights in a volume:
 
@@ -52,6 +52,20 @@ export TYPECASTLM_ENDPOINT=http://localhost:8000
 
 A GPU host needs `nvidia-container-toolkit`; a host without a GPU adds
 `-f docker-compose.cpu.yml`. Keys, ports, your own weights: [docs/DOCKER.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md).
+
+**Under a launcher** — the trunk as a GGUF in llama-server, the head applied by the client:
+
+```
+llama-server -m typecastlm-qwen3.5-3.8b-q8_0.gguf --embeddings --port 8080
+```
+
+```python
+from typecastlm import Client, EmbeddingReader
+c = Client(transport=EmbeddingReader("http://127.0.0.1:8080"))
+```
+
+4 GB in 8-bit, no torch anywhere, the same `Client` on top. What the launcher must do and how
+close the numbers stay: [docs/LAUNCHERS.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/LAUNCHERS.md).
 
 **Behind HTTP on this machine** — one command, and `Client()` finds it:
 
