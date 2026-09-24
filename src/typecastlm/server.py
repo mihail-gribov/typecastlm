@@ -56,9 +56,10 @@ class Reader:
         self.model.requires_grad_(False)
         self.device = next(self.model.parameters()).device
         self.labels = [self.model.config.id2label[i] for i in range(self.model.config.num_labels)]
-        self.col = {l: i for i, l in enumerate(self.labels)}
-        self.marks = {l[len("mark_"):]: i for l, i in self.col.items() if l.startswith("mark_")}
-        self._rows: dict = {}                    # mark -> the row that reads it
+        self.col = {name: i for i, name in enumerate(self.labels)}
+        self.marks = {n[len("mark_"):]: i for n, i in self.col.items()
+                      if n.startswith("mark_")}
+        self._rows: dict = {}                    # mark -> a row per surface form
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         limit = getattr(self.model.config, "max_position_embeddings", None)
@@ -69,12 +70,11 @@ class Reader:
 
     EXPECTED = ("true", "false", "unsure")
     PROMPT_FIELDS = ("system", "format_two", "means_two", "body", "tail", "max_state_tokens")
-    MARK_PREFIX = "mark_"          # head rows for choice and scale marks
 
     def check(self, strict: bool = True) -> list[str]:
         """Is this checkpoint the thing the clients are written against?
 
-        A model with two outputs loses `unknown` without a word, and one whose labels sit in
+        A model with two outputs loses `unsure` without a word, and one whose labels sit in
         another order swaps yes and no — both keep answering, plausibly, and wrongly. So the
         shape is checked once at startup and the process refuses to serve a mismatch.
         """
@@ -85,13 +85,15 @@ class Reader:
         if n < 3:
             bad.append(f"the clients read at least three outputs, this model has {n}: "
                        f"{self.labels}")
-        elif tuple(l.lower() for l in self.labels[:3]) != self.EXPECTED:
+        elif tuple(n.lower() for n in self.labels[:3]) != self.EXPECTED:
             bad.append(f"the first three labels are {self.labels[:3]}, expected "
                        f"{list(self.EXPECTED)} in that order — the order is what carries the "
                        "meaning")
         if not self.marks:
-            bad.append("no `mark_*` outputs: this checkpoint can answer yes or no, but not "
-                       "choice or scale")
+            # The modes read marks from the embedding, so a head without `mark_*` rows still
+            # answers a choice here. It is not the documented checkpoint, though: through the
+            # plain `text-classification` pipeline such a model can only answer yes or no.
+            bad.append("no `mark_*` outputs: this is not the checkpoint the clients document")
         missing = [f for f in self.PROMPT_FIELDS if f not in self.prompt_cfg]
         if missing:
             bad.append(f"prompt.json is missing {missing}")
@@ -165,35 +167,35 @@ class Reader:
     LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     ORDINAL = "0123456789" + LETTERS
 
-    def mark_row(self, mark: str):
-        """The direction that reads this mark, or None if the mark is not a single token.
+    def mark_rows(self, mark: str):
+        """The directions that read this mark, one per surface form, or None if it is not a token.
 
-        A mark row is the model\'s own output row for that token — that is how the head was
-        packed — so a mark the head does not carry is still readable: the row is in the embedding,
-        and taking it from there gives the same number.
+        A mark row is the model's own output row for that token — that is how the head was packed
+        — so a mark the head does not carry is still readable: the row is in the embedding, and
+        taking it from there gives the same number to the last bit.
+
+        A mark appears as `" A"` and as `"A"`, usually both single tokens and of different
+        strength. The strongest is read, never their mean: averaging mixes an exact measurement
+        with its weak copies (0.858 against 0.873 on ARC).
         """
         if mark not in self._rows:
-            col = self.marks.get(mark)
-            if col is not None:
-                self._rows[mark] = self.model.score.weight[col].float()
-            else:
-                ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
-                                      for x in (" " + mark, mark)) if len(t) == 1]
-                emb = self.model.get_input_embeddings().weight  # tied, and where marks come from
-                self._rows[mark] = emb[ids[0]].float() if ids else None
+            ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
+                                  for x in (" " + mark, mark)) if len(t) == 1]
+            emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
+            self._rows[mark] = self.torch.stack([emb[i].float() for i in ids]) if ids else None
         return self._rows[mark]
 
     def marks_for(self, keys: list[str], ordinal: bool) -> list[str]:
-        """Marks for the options: a rubric\'s own digits when usable, else `0..9A..Z`; letters
+        """Marks for the options: a rubric's own digits when usable, else `0..9A..Z`; letters
         for a choice. A mark the head lacks is taken from the embedding it was copied from."""
         if ordinal:
             own = [str(k) for k in keys]
-            if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and self.mark_row(x) is not None
+            if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and self.mark_rows(x) is not None
                                       for x in own):
                 return own
-            row = [c for c in self.ORDINAL if self.mark_row(c) is not None]
+            row = [c for c in self.ORDINAL if self.mark_rows(c) is not None]
         else:
-            row = [c for c in self.LETTERS if self.mark_row(c) is not None]
+            row = [c for c in self.LETTERS if self.mark_rows(c) is not None]
         if len(row) < len(keys):
             raise ValueError(f"{len(keys)} options, but only {len(row)} marks are single tokens "
                              "for this model")
@@ -206,12 +208,17 @@ class Reader:
             half = self.max_state_tokens // 2
             state = (self.tok.decode(ids[:half], skip_special_tokens=True) + " […] "
                      + self.tok.decode(ids[-half:], skip_special_tokens=True))
-        ask = ("Answer with the number of the level that rates it." if ordinal
-               and marks[0].isdigit() else "Answer with one letter.")
+        C = self.prompt_cfg.get("marks") or {}
+        if not ordinal:
+            ask = C.get("choice_ask", "Answer with one letter.")
+        elif marks[0].isdigit():
+            ask = C.get("score_ask_digits", "Answer with the number of the level that rates it.")
+        else:
+            ask = C.get("score_ask_marks", "Answer with the letter of the level that rates it.")
         body = (f"<state>\n{state}\n</state>\n\n{instructions}\n\n"
                 + "\n".join(f"{m}. {d}" for m, (_, d) in zip(marks, options))
                 + f"\n\n{ask}")
-        msgs = [{"role": "system", "content": self.CHOICE_SYSTEM},
+        msgs = [{"role": "system", "content": C.get("system", self.CHOICE_SYSTEM)},
                 {"role": "user", "content": body}]
         try:
             text = self.tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
@@ -304,7 +311,7 @@ class Reader:
                 z = self.model(**enc).logits[0, :3].float().cpu()
             else:
                 h = self.model.model(**enc).last_hidden_state[0, -1].float()
-                z = (self.torch.stack([self.mark_row(m) for m in marks]) @ h).cpu()
+                z = self.torch.tensor([float((self.mark_rows(m) @ h).max()) for m in marks])
         logits = {k: float(v) for k, v in zip(keys, z)}
         out = self.read(self.kind_of(q), logits, legend)
         out["logits"] = logits

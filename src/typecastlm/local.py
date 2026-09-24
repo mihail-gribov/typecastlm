@@ -50,8 +50,7 @@ class Reader:
         self.trunk = self.model.model
         self.names = [self.model.config.id2label[i]
                       for i in range(self.model.config.num_labels)]
-        self.col = {n: i for i, n in enumerate(self.names)}
-        self._rows: dict[str, torch.Tensor | None] = {}      # mark -> the row that reads it
+        self._rows: dict[str, torch.Tensor | None] = {}   # mark -> a row per surface form
         # The head emits one logit per answer and one per mark. A softmax over all of them is
         # meaningless — each mode normalises its own subset.
         self.cal = self.cfg.get("calibration", {})
@@ -78,31 +77,34 @@ class Reader:
         return self._chat(C["system"], body, C["tail"])
 
     # -- marks ----------------------------------------------------------------------------------
-    def _mark_row(self, mark: str) -> torch.Tensor | None:
-        """The direction that reads this mark, or None if the mark is not one token.
+    def _mark_rows(self, mark: str) -> torch.Tensor | None:
+        """The directions that read this mark, one per surface form, or None if it is not a token.
 
-        A mark row is the model's own output row for that token — that is how the head was
-        packed — so a mark the head does not carry is not a mark the model cannot read: the row
-        is right there in the embedding, and taking it from there gives the same number.
+        A mark row is the model's own output row for that token — that is how the head was packed
+        — so a mark the head does not carry is not a mark the model cannot read: the row is in the
+        embedding, and taking it from there gives the same number to the last bit.
+
+        A mark appears in text as `" A"` and as `"A"`, and both are usually single tokens of
+        different strength. The mode reads the strongest, never their mean: the forms are nearly
+        proportional but unequal, so averaging mixes an exact measurement with its weak copies
+        (0.858 against 0.873 on ARC).
         """
-        if mark in self._rows:
-            return self._rows[mark]
-        col = self.col.get(f"mark_{mark}")
-        if col is not None:
-            row = self.model.score.weight[col].float()
-        else:
+        if mark not in self._rows:
             ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
                                   for x in (" " + mark, mark)) if len(t) == 1]
             emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
-            row = emb[ids[0]].float() if ids else None
-        self._rows[mark] = row
-        return row
+            self._rows[mark] = torch.stack([emb[i].float() for i in ids]) if ids else None
+        return self._rows[mark]
+
+    def _marks_cfg(self, key: str, default: str) -> str:
+        """Wording of the marks mode. It travels with the weights, like the two-criteria one."""
+        return (self.cfg.get("marks") or {}).get(key, default)
 
     def _has_mark(self, mark: str) -> bool:
-        return self._mark_row(mark) is not None
+        return self._mark_rows(mark) is not None
 
     def _marks_for(self, ids: list[str], ordinal: bool) -> list[str]:
-        """Marks for the options: a rubric\'s own digits when usable, else letters or `0..9A..Z`."""
+        """Marks for the options: a rubric's own digits when usable, else letters or `0..9A..Z`."""
         if ordinal:
             own = [str(x) for x in ids]
             if len(own) <= 10 and all(x.isdigit() and len(x) == 1 and self._has_mark(x)
@@ -165,9 +167,9 @@ class Reader:
         body = (f"<state>\n{self._fold(state)}\n</state>\n\n{question}\n\n"
                 + "\n".join(f"{m}. {desc}" for m, (_, desc) in zip(marks, options))
                 + f"\n\n{ask}")
-        h = self._last(self._chat(CHOICE_SYSTEM, body, "Answer: "))
-        R = torch.stack([self._mark_row(m) for m in marks])
-        z = (R @ h.float()).tolist()
+        h = self._last(self._chat(self._marks_cfg("system", CHOICE_SYSTEM), body,
+                                  self.cfg.get("tail", "Answer: ")))
+        z = [float((self._mark_rows(m) @ h.float()).max()) for m in marks]
         w = [v / self._temp("scale" if ordinal else "choice") for v in z]
         e = [math.exp(v - max(w)) for v in w]
         s = sum(e)
@@ -176,15 +178,19 @@ class Reader:
                     marks=dict(zip(ids, marks)))
 
     def choice(self, state: str, question: str, options: list[tuple[str, str]]) -> dict:
-        """Pick one of 2..16 options. `options` are `(name, description)`; names are yours and do
+        """Pick one of 2..26 options. `options` are `(name, description)`; names are yours and do
         not reach the prompt."""
-        return self._pick(state, question, options, "Answer with one letter.", ordinal=False)
+        return self._pick(state, question, options,
+                          self._marks_cfg("choice_ask", "Answer with one letter."), ordinal=False)
 
     def scale(self, state: str, question: str, levels: list[tuple[str, str]]) -> dict:
         """Pick a level of an ordinal rubric. `levels` are `(name, description)` in order."""
-        marks_are_digits = all(str(k).isdigit() for k, _ in levels)
-        ask = ("Answer with the number of the level that rates it." if marks_are_digits
-               else "Answer with the mark of the level that rates it.")
+        marks = self._marks_for([k for k, _ in levels], ordinal=True)
+        ask = (self._marks_cfg("score_ask_digits",
+                               "Answer with the number of the level that rates it.")
+               if marks[0].isdigit()
+               else self._marks_cfg("score_ask_marks",
+                                    "Answer with the letter of the level that rates it."))
         return self._pick(state, question, levels, ask, ordinal=True)
 
     @torch.no_grad()

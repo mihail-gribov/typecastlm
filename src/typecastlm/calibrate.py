@@ -52,7 +52,7 @@ def calibrate(rows: list[tuple[dict, str]], grid: tuple[float, float, float] = (
     `logits` is the dictionary an answer carries (`Answer.logits`, `Choice.logits`); the correct
     answer is one of its keys. `keys` restricts the softmax to the answers the mode is read over,
     which matters for `noul`: its logits carry the third answer too, and fitting over all three
-    would fit `tfu`\'s temperature instead. The temperature is chosen to minimise calibration
+    would fit `tfu`'s temperature instead. The temperature is chosen to minimise calibration
     error — NOT cross-entropy, which pulls towards numbers that read worse: on our own
     three-answer mode it picked 5.63 where 2.85 is right, and made the error larger, not smaller.
 

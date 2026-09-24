@@ -37,6 +37,14 @@ Jev's, field for field.
 
 **Fixed**
 
+- The marks mode read the wrong row and asked the wrong question. A mark appears as `" A"` and as
+  `"A"`, and the reading takes the stronger of the two — which is what the temperatures were
+  fitted with, and what the head could not express, since it carries one row per mark. The
+  wording drifted too: the service and the reader asked a rubric with named levels two different
+  questions, and neither was the one the numbers were measured with.
+- The wording of the marks mode now travels with the weights, under `marks` in `prompt.json`,
+  where the two-criteria wording already was. `tests/same_reading.py` compares the prompt the
+  reader builds with the prompt the service builds, character by character.
 - The client never honoured `Retry-After`: the value was read into a variable that had just been
   set to `None`, so a service asking for a longer pause got the doubling instead.
 - The connection pool was mounted for `https://` only, so a local service — which is the usual

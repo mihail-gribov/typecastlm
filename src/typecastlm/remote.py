@@ -57,7 +57,7 @@ class Choice:
 class Answer:
     """What `noul` returns: the two answers that decide the question, read against each other.
 
-    `prob`, `margin`, `ms`, `input_tokens`, `model` are the service\'s fields; `logits` is the raw
+    `prob`, `margin`, `ms`, `input_tokens`, `model` are the service's fields; `logits` is the raw
     payload. There is no third number here — ask `tfu` for that reading.
     """
 
@@ -80,7 +80,7 @@ class Client:
     def __init__(self, endpoint: str | None = None, api_key: str | None = None,
                  model: str = "typecastlm-qwen3.5-3.8b", timeout: float = 10.0, retries: int = 5,
                  pool: int = 32, temperature: float | None = None, calibrated: bool = True):
-        """`temperature` overrides the checkpoint\'s per-mode temperatures; `calibrated=False`
+        """`temperature` overrides the checkpoint's per-mode temperatures; `calibrated=False`
         disables them. Temperatures are applied here because the service returns logits, so an
         answer can be re-read at another temperature without asking again. They change no
         ordering, only confidence."""
@@ -140,7 +140,7 @@ class Client:
         raise RuntimeError("unreachable")
 
     def _soft(self, logits: dict, mode: str) -> dict[str, float]:
-        """Softmax over one mode\'s outputs, at that mode\'s temperature."""
+        """Softmax over one mode's outputs, at that mode's temperature."""
         v = {n: z / self._temp(mode) for n, z in logits.items()}
         m = max(v.values())
         e = {n: math.exp(x - m) for n, x in v.items()}
