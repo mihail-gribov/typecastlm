@@ -105,8 +105,9 @@ class NoulAnswer(BaseModel):
     noul: float = Field(..., description="Probability of yes, a softmax over the two answers that "
                                          "decide the question at the `verdict` temperature. The "
                                          "verdict is `noul >= 0.5`.", examples=[0.98])
-    logits: dict[str, float] = Field(
-        ..., description="The raw outputs for true, false and unsure, before any temperature.")
+    logits: dict[str, float] | None = Field(
+        None, description="The raw outputs for true, false and unsure, before any temperature. "
+                          "Absent when the model is proxied: Jev returns probabilities alone.")
 
 
 class TfuAnswer(BaseModel):
@@ -117,7 +118,10 @@ class TfuAnswer(BaseModel):
         ..., description="Probability of each of the three answers at the `three_answers` "
                          "temperature; they sum to 1.")
     confidence: float = Field(..., description="The probability of the leading answer.")
-    logits: dict[str, float]
+    logits: dict[str, float] | None = None
+    native: bool = Field(True, description="False when the server has no `tfu` of its own and "
+                                           "the question was asked as a `choice` with a third "
+                                           "option — a proxied Jev.")
 
 
 class ChoiceAnswer(BaseModel):
@@ -128,10 +132,10 @@ class ChoiceAnswer(BaseModel):
     probabilities: dict[str, float] = Field(
         ..., description="Probability of each option, keyed by its name; they sum to 1.")
     confidence: float = Field(..., description="The probability of the chosen option.")
-    marks: dict[str, str] = Field(
-        ..., description="Which letter each option was given, in the order the request listed "
-                         "them.", examples=[{"angry": "A", "calm": "B"}])
-    logits: dict[str, float]
+    marks: dict[str, str] | None = Field(
+        None, description="Which letter each option was given, in the order the request listed "
+                          "them. Absent when proxied.", examples=[{"angry": "A", "calm": "B"}])
+    logits: dict[str, float] | None = None
 
 
 class ScoreAnswer(BaseModel):
@@ -143,8 +147,9 @@ class ScoreAnswer(BaseModel):
     probabilities: dict[str, float] = Field(
         ..., description="Probability of each level, keyed by position; they sum to 1.")
     confidence: float = Field(..., description="The probability of the leading level.")
-    marks: dict[str, str] = Field(..., description="Which mark each level was given.")
-    logits: dict[str, float]
+    marks: dict[str, str] | None = Field(None, description="Which mark each level was given; "
+                                                          "absent when proxied.")
+    logits: dict[str, float] | None = None
 
 
 Answer = Annotated[Union[NoulAnswer, TfuAnswer, ChoiceAnswer, ScoreAnswer],
@@ -191,9 +196,14 @@ class Load(BaseModel):
 
 class Health(BaseModel):
     """The deployment: which checkpoint, where, with which wording — what your numbers came from."""
-    backend: str = Field(..., description="Where the trunk runs: `local` (the weights in this "
-                                          "process), `llama` (a llama-server with the GGUF) or "
-                                          "`openai` (a server speaking /v1/embeddings).")
+    backend: str = Field(..., description="Where the model is: `local` (the weights in this "
+                                          "process), `llama` (a llama-server with the GGUF), "
+                                          "`openai` (a server speaking /v1/embeddings) or `jev` "
+                                          "(proxied to TypeSafe's Jev).")
+    status: str = Field("ready", description="`ready`, `loading` while a backend is being "
+                                             "switched or downloaded, `error` when none is "
+                                             "loaded; then the `/v1` routes answer 503.")
+    status_detail: str = ""
     model: str = Field(..., description="The checkpoint as it was loaded: a Hub id or a path.")
     name: str = Field(..., description="Its short name, the one answers carry.")
     labels: list[str]
@@ -215,10 +225,36 @@ class Error(BaseModel):
                                        "header."])
 
 
+class Settings(BaseModel):
+    """What `/admin` shows and changes: where the model is and how it is read. The keys are
+    never echoed back, only whether one is set."""
+    backend: Literal["local", "llama", "openai", "jev"] = "local"
+    model: str = Field("mihailgribov/typecastlm-qwen3.5-3.8b",
+                       description="A Hub repository or a directory: the weights for `local`, "
+                                   "`prompt.json` and `head.json` for an embedding backend, the "
+                                   "upstream model name for `jev`.")
+    device: str = "auto"
+    dtype: str = "bfloat16"
+    max_state_tokens: int | None = None
+    prompt: str | None = Field(None, description="A wording file instead of the shipped one.")
+    backend_endpoint: str = Field("", description="The embedding server or the upstream API.")
+    backend_key: str = Field("", description="Its token; empty keeps the one already set.")
+    backend_key_set: bool = Field(False, description="Read-only: whether a token is stored.")
+
+
+class Status(BaseModel):
+    status: str
+    detail: str = ""
+    since: float = Field(0.0, description="Unix time the current status began.")
+    settings: Settings
+
+
 # Responses documented on the two `/v1` routes beyond 200 and the 422 FastAPI adds itself.
 RESPONSES = {
     401: {"model": Error, "description": "The service requires a key and the `Authorization` "
                                          "header does not carry it."},
+    503: {"model": Error, "description": "No model is loaded: a backend is being switched, or "
+                                         "none could be started; `/admin` says which."},
     529: {"model": Error, "description": "The model is busy and the line for it is full; "
                                          "`Retry-After` says in how many seconds to come back."},
 }

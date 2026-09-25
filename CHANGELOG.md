@@ -46,6 +46,15 @@ The service grows into a deployment, and the rest of the Jev API arrives.
 - The service chooses where the trunk runs: `--backend local` loads the weights, `--backend
   llama` or `openai` puts the same Jev API in front of an embedding server, with no torch in the
   process. `/health` names the backend. The full live suite passes on both paths.
+- The service as a proxy: `--backend jev` forwards to TypeSafe's Jev and answers in the same
+  shape, translating `tfu` and `scale` levels; `logits` and `marks` are optional in the schema
+  because a proxied answer has none.
+- `/admin`: a page showing the three schemes — weights here, an embedding server, Jev proxied
+  — drawn, with a form each, switching at runtime through `POST /admin/config`. The old backend
+  answers until the new one is loaded, a failed switch leaves it in place, the settings that
+  worked go to `--config` (in Docker, the `hf-cache` volume) and are read before the environment
+  at the next start. A service that cannot load its model still starts and answers 503 on `/v1`.
+  Live: 16/16, including the switch Jev → llama-server → Jev.
 - One client for every server that holds the model: `Client(endpoint, api=…)` with `typecastlm`,
   `jev`, `llama`, `openai` or `auto`, `host`/`port` as an alternative to the address, and
   `Client.jev()` for TypeSafe's Jev at its own address with `TYPESAFE_API_KEY`. Against Jev,

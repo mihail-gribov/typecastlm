@@ -14,7 +14,7 @@
     "tags": [
      "deployment"
     ],
-    "summary": "Which checkpoint, where, in what form, with which wording",
+    "summary": "Which model, where, in what form, with which wording",
     "operationId": "health_health_get",
     "responses": {
      "200": {
@@ -35,7 +35,7 @@
     "tags": [
      "v1"
     ],
-    "summary": "The checkpoint this service holds, and its alias",
+    "summary": "The model this service holds, and its alias",
     "operationId": "models_v1_models_get",
     "responses": {
      "200": {
@@ -50,6 +50,16 @@
      },
      "401": {
       "description": "The service requires a key and the `Authorization` header does not carry it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "No model is loaded: a backend is being switched, or none could be started; `/admin` says which.",
       "content": {
        "application/json": {
         "schema": {
@@ -97,6 +107,16 @@
      },
      "401": {
       "description": "The service requires a key and the `Authorization` header does not carry it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "No model is loaded: a backend is being switched, or none could be started; `/admin` says which.",
       "content": {
        "application/json": {
         "schema": {
@@ -173,8 +193,110 @@
        }
       }
      },
+     "503": {
+      "description": "No model is loaded: a backend is being switched, or none could be started; `/admin` says which.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
      "529": {
       "description": "The model is busy and the line for it is full; `Retry-After` says in how many seconds to come back.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/admin/config": {
+   "get": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Where the model is, and how the switch is going",
+    "operationId": "admin_config_admin_config_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Status"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "The service requires a key and the `Authorization` header does not carry it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   },
+   "post": {
+    "tags": [
+     "admin"
+    ],
+    "summary": "Switch backend or model; the old one answers until the new one is ready",
+    "operationId": "admin_apply_admin_config_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": true,
+        "type": "object",
+        "title": "Changes"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Status"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "The service requires a key and the `Authorization` header does not carry it.",
       "content": {
        "application/json": {
         "schema": {
@@ -233,12 +355,19 @@
       "description": "The probability of the chosen option."
      },
      "marks": {
-      "additionalProperties": {
-       "type": "string"
-      },
-      "type": "object",
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Marks",
-      "description": "Which letter each option was given, in the order the request listed them.",
+      "description": "Which letter each option was given, in the order the request listed them. Absent when proxied.",
       "examples": [
        {
         "angry": "A",
@@ -247,10 +376,17 @@
       ]
      },
      "logits": {
-      "additionalProperties": {
-       "type": "number"
-      },
-      "type": "object",
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "number"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Logits"
      }
     },
@@ -259,9 +395,7 @@
      "type",
      "choice",
      "probabilities",
-     "confidence",
-     "marks",
-     "logits"
+     "confidence"
     ],
     "title": "ChoiceAnswer",
     "description": "The option chosen, and how likely each was."
@@ -369,7 +503,18 @@
      "backend": {
       "type": "string",
       "title": "Backend",
-      "description": "Where the trunk runs: `local` (the weights in this process), `llama` (a llama-server with the GGUF) or `openai` (a server speaking /v1/embeddings)."
+      "description": "Where the model is: `local` (the weights in this process), `llama` (a llama-server with the GGUF), `openai` (a server speaking /v1/embeddings) or `jev` (proxied to TypeSafe's Jev)."
+     },
+     "status": {
+      "type": "string",
+      "title": "Status",
+      "description": "`ready`, `loading` while a backend is being switched or downloaded, `error` when none is loaded; then the `/v1` routes answer 503.",
+      "default": "ready"
+     },
+     "status_detail": {
+      "type": "string",
+      "title": "Status Detail",
+      "default": ""
      },
      "model": {
       "type": "string",
@@ -558,19 +703,25 @@
       ]
      },
      "logits": {
-      "additionalProperties": {
-       "type": "number"
-      },
-      "type": "object",
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "number"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Logits",
-      "description": "The raw outputs for true, false and unsure, before any temperature."
+      "description": "The raw outputs for true, false and unsure, before any temperature. Absent when the model is proxied: Jev returns probabilities alone."
      }
     },
     "type": "object",
     "required": [
      "type",
-     "noul",
-     "logits"
+     "noul"
     ],
     "title": "NoulAnswer",
     "description": "The probability of yes."
@@ -748,18 +899,32 @@
       "description": "The probability of the leading level."
      },
      "marks": {
-      "additionalProperties": {
-       "type": "string"
-      },
-      "type": "object",
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Marks",
-      "description": "Which mark each level was given."
+      "description": "Which mark each level was given; absent when proxied."
      },
      "logits": {
-      "additionalProperties": {
-       "type": "number"
-      },
-      "type": "object",
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "number"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Logits"
      }
     },
@@ -769,9 +934,7 @@
      "score",
      "legend",
      "probabilities",
-     "confidence",
-     "marks",
-     "logits"
+     "confidence"
     ],
     "title": "ScoreAnswer",
     "description": "The expected level, and how likely each level was."
@@ -873,6 +1036,109 @@
     ],
     "title": "ScoreQuestion",
     "description": "A level on an ordinal rubric, with the expected level and a probability per level."
+   },
+   "Settings": {
+    "properties": {
+     "backend": {
+      "type": "string",
+      "enum": [
+       "local",
+       "llama",
+       "openai",
+       "jev"
+      ],
+      "title": "Backend",
+      "default": "local"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model",
+      "description": "A Hub repository or a directory: the weights for `local`, `prompt.json` and `head.json` for an embedding backend, the upstream model name for `jev`.",
+      "default": "mihailgribov/typecastlm-qwen3.5-3.8b"
+     },
+     "device": {
+      "type": "string",
+      "title": "Device",
+      "default": "auto"
+     },
+     "dtype": {
+      "type": "string",
+      "title": "Dtype",
+      "default": "bfloat16"
+     },
+     "max_state_tokens": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Max State Tokens"
+     },
+     "prompt": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Prompt",
+      "description": "A wording file instead of the shipped one."
+     },
+     "backend_endpoint": {
+      "type": "string",
+      "title": "Backend Endpoint",
+      "description": "The embedding server or the upstream API.",
+      "default": ""
+     },
+     "backend_key": {
+      "type": "string",
+      "title": "Backend Key",
+      "description": "Its token; empty keeps the one already set.",
+      "default": ""
+     },
+     "backend_key_set": {
+      "type": "boolean",
+      "title": "Backend Key Set",
+      "description": "Read-only: whether a token is stored.",
+      "default": false
+     }
+    },
+    "type": "object",
+    "title": "Settings",
+    "description": "What `/admin` shows and changes: where the model is and how it is read. The keys are\nnever echoed back, only whether one is set."
+   },
+   "Status": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "detail": {
+      "type": "string",
+      "title": "Detail",
+      "default": ""
+     },
+     "since": {
+      "type": "number",
+      "title": "Since",
+      "description": "Unix time the current status began.",
+      "default": 0.0
+     },
+     "settings": {
+      "$ref": "#/components/schemas/Settings"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status",
+     "settings"
+    ],
+    "title": "Status"
    },
    "SystemOneRequest": {
     "properties": {
@@ -1055,11 +1321,24 @@
       "description": "The probability of the leading answer."
      },
      "logits": {
-      "additionalProperties": {
-       "type": "number"
-      },
-      "type": "object",
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "number"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
       "title": "Logits"
+     },
+     "native": {
+      "type": "boolean",
+      "title": "Native",
+      "description": "False when the server has no `tfu` of its own and the question was asked as a `choice` with a third option — a proxied Jev.",
+      "default": true
      }
     },
     "type": "object",
@@ -1067,8 +1346,7 @@
      "type",
      "tfu",
      "probabilities",
-     "confidence",
-     "logits"
+     "confidence"
     ],
     "title": "TfuAnswer",
     "description": "One distribution over true, false and unsure."

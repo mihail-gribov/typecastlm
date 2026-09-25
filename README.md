@@ -348,9 +348,19 @@ typecastlm-serve --backend llama --backend-endpoint http://127.0.0.1:8080 \
     --model mihailgribov/typecastlm-qwen3.5-3.8b-gguf --port 8000
 ```
 
-`/health` says which backend answers. The reading — prompt, head, temperatures — is the same
-code on both paths (`typecastlm.reading`), and `tests/same_reading.py` holds it to the reader
-shipped beside the weights.
+The third choice is no model of ours at all: `--backend jev` forwards every request to
+TypeSafe's Jev under their key (`TYPESAFE_API_KEY`) and answers in the same shape, translating
+what Jev lacks — `tfu` as a `choice` with a third option, marked `native: false`; `scale` levels
+as the list Jev wants, back under your names — so the address in front never changes.
+
+`/health` says which backend answers, and **`/admin`** is a page that shows the three schemes,
+drawn, and switches between them at runtime: pick one, say where, apply. The old backend keeps
+answering until the new one is loaded, a switch that fails leaves the working one in place, and
+the settings that worked are written to `--config` and read before the environment at the
+next start. A service whose model is missing still starts, answers 503 on `/v1`, and says in
+`/admin` what to fix. The reading — prompt, head, temperatures — is the same code on every
+path (`typecastlm.reading`), and `tests/same_reading.py` holds it to the reader shipped beside
+the weights.
 
 ## Using the model without any of this
 

@@ -398,3 +398,85 @@ def test_the_error_carries_the_message_whatever_its_shape():
         == "questions.q.criteria: Input should be a valid list"
     assert _message('{"detail": "no questions"}') == "no questions"
     assert _message("<html>gateway</html>") == "<html>gateway</html>"
+
+
+def test_the_proxy_asks_jev_what_jev_understands():
+    """`tfu` becomes a choice with the shipped third answer, `scale` becomes `score`, a map of
+    levels becomes the list Jev wants, and the answers come back in our shape under our keys."""
+    from typecastlm.proxy import JevReader
+    from typecastlm.remote import UNSURE
+
+    r = object.__new__(JevReader)
+    sent, back = r.translate({
+        "t": {"type": "tfu", "instructions": "supported?",
+              "criteria": {"true": "supported", "false": "contradicted"}},
+        "s": {"type": "scale", "instructions": "how angry?",
+              "criteria": {"calm": "calm", "angry": "angry"}},
+        "n": {"type": "noul", "instructions": "spam?", "criteria": None}})
+    assert sent["t"]["type"] == "choice" and sent["t"]["criteria"]["unsure"] == UNSURE
+    assert sent["s"]["type"] == "score" and sent["s"]["criteria"] == ["calm", "angry"]
+    assert sent["n"] == {"type": "noul", "instructions": "spam?", "criteria": None}
+    t = r.read_back({"type": "choice", "choice": "unsure", "confidence": 0.8,
+                     "probabilities": {"true": 0.1, "false": 0.1, "unsure": 0.8}}, back["t"])
+    assert t == {"type": "tfu", "tfu": "unsure", "probabilities": {"true": 0.1, "false": 0.1,
+                 "unsure": 0.8}, "confidence": 0.8, "native": False}
+    s = r.read_back({"type": "score", "score": 0.9, "confidence": 0.9,
+                     "legend": {"0": "calm", "1": "angry"},
+                     "probabilities": {"0": 0.1, "1": 0.9}}, back["s"])
+    assert s["probabilities"] == {"calm": 0.1, "angry": 0.9} and s["legend"]["angry"] == "angry"
+
+
+def test_settings_are_kept_and_the_key_is_never_echoed(tmp_path):
+    from typecastlm.server import Service
+
+    path = tmp_path / "cfg.json"
+    svc = Service(None, {"backend": "jev", "model": "jev-latest", "backend_key": "secret"}, path)
+    svc.save()
+    assert Service.load(path)["backend_key"] == "secret"
+    st = svc.state()
+    assert st["status"] == "error" and st["settings"]["backend_key"] == ""
+    assert st["settings"]["backend_key_set"] is True
+    assert Service.load(tmp_path / "missing.json") == {}
+
+
+def test_a_switch_keeps_the_old_reader_until_the_new_one_is_ready(monkeypatch):
+    import threading
+
+    from typecastlm import server
+    from typecastlm.server import Gate, Service
+
+    class Fake:
+        def __init__(self, tag):
+            self.tag, self.served, self.prompt_cfg, self.max_state_tokens = tag, tag, {}, 1
+
+    gate_ = Gate(1)
+    svc = Service(Fake("old"), {"backend": "local", "model": "old"})
+    ready = threading.Event()
+
+    def slow(cfg, strict=True):
+        ready.wait(5)
+        if cfg["model"] == "broken":
+            raise RuntimeError("no such checkpoint")
+        return Fake(cfg["model"])
+
+    monkeypatch.setattr(server, "make_reader", slow)
+    svc.apply({"model": "new"}, gate_)
+    assert svc.status == "loading" and svc.reader.tag == "old"       # still answering
+    with pytest.raises(RuntimeError):
+        svc.apply({"model": "another"}, gate_)                         # one at a time
+    ready.set()
+    for _ in range(50):
+        if svc.status == "ready" and svc.reader.tag == "new":
+            break
+        threading.Event().wait(0.05)
+    assert svc.reader.tag == "new" and svc.cfg["model"] == "new"
+    ready.clear()
+    svc.apply({"model": "broken"}, gate_)
+    ready.set()
+    for _ in range(50):
+        if svc.status == "ready" and svc.last_error:
+            break
+        threading.Event().wait(0.05)
+    assert svc.reader.tag == "new" and "no such checkpoint" in svc.last_error
+    with pytest.raises(ValueError):
+        svc.apply({"backend": "grpc"}, gate_)

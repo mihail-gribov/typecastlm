@@ -38,6 +38,7 @@ The whole contract is in `docs/API.md`.
 """
 import argparse
 import datetime as _dt
+import gc
 import json
 import math
 import os
@@ -51,6 +52,9 @@ from .reading import QuestionError, Reading
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
 DEFAULT_QUEUE = 32
+BACKENDS = ("local", "llama", "openai", "jev")
+CONFIG_FIELDS = ("backend", "model", "device", "dtype", "max_state_tokens", "prompt",
+                 "backend_endpoint", "backend_key")
 
 
 def env(name: str, default=None) -> str | None:
@@ -327,26 +331,149 @@ def _version() -> str:
         return __version__
 
 
-def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
-              queue: int = DEFAULT_QUEUE):
-    """The Jev API, served from your own weights.
+def make_reader(cfg: dict, strict: bool = True) -> Reading:
+    """The reader a configuration names: the weights in this process, an embedding server, or
+    Jev. Everything above this line is the same whichever it is."""
+    backend = cfg.get("backend") or "local"
+    model = cfg.get("model") or DEFAULT_MODEL
+    prompt = cfg.get("prompt") or None
+    mst = int(cfg.get("max_state_tokens") or 0) or None
+    if backend == "local":
+        return Reader(model, device=cfg.get("device") or "auto", dtype=cfg.get("dtype") or "bfloat16",
+                      strict=strict, prompt=prompt, max_state_tokens=mst)
+    if backend in ("llama", "openai"):
+        from .embedding import EmbeddingReader
+
+        return EmbeddingReader(cfg.get("backend_endpoint") or "http://127.0.0.1:8080",
+                               model=model, prompt=prompt, max_state_tokens=mst, api=backend,
+                               api_key=cfg.get("backend_key") or "", check=strict)
+    if backend == "jev":
+        from .proxy import JevReader
+        from .remote import JEV_ENDPOINT, JEV_MODEL
+
+        return JevReader(cfg.get("backend_endpoint") or JEV_ENDPOINT,
+                         api_key=cfg.get("backend_key") or "",
+                         model=model if model != DEFAULT_MODEL else JEV_MODEL, check=strict)
+    raise ValueError(f"backend is one of {BACKENDS}, not {backend!r}")
+
+
+class Service:
+    """The reader in use, the settings it came from, and the switch to another.
+
+    A switch loads the new reader beside the old one — minutes, for weights from the Hub — and
+    swaps under the model lock, so requests keep being answered by the old reader until the new
+    one is ready and never by half of either. Settings that worked are written to the config
+    file, which is read before the environment at the next start: what was chosen in `/admin` is
+    the later decision. A service that starts without a working reader still starts, answers
+    503 on `/v1`, and says in `/health` and `/admin` what is wrong, because a box whose model is
+    not there yet is exactly the box someone needs to reach.
+    """
+
+    def __init__(self, reader: Reading | None = None, cfg: dict | None = None,
+                 config_path: str | Path | None = None, strict: bool = True):
+        self.reader, self.cfg = reader, dict(cfg or {})
+        self.path = Path(config_path) if config_path else None
+        self.strict = strict
+        self.status = "ready" if reader is not None else "error"
+        self.detail, self.since = "", time.time()
+        self.last_error = ""
+        self._mu = threading.Lock()
+
+    @staticmethod
+    def load(path: str | Path | None) -> dict:
+        if not path or not Path(path).exists():
+            return {}
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            return {k: v for k, v in data.items() if k in CONFIG_FIELDS}
+        except Exception:
+            return {}
+
+    def save(self) -> None:
+        if not self.path:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({k: self.cfg.get(k) for k in CONFIG_FIELDS}, indent=1),
+                             encoding="utf-8")
+        try:
+            self.path.chmod(0o600)               # the file holds the upstream key
+        except OSError:
+            pass
+
+    def settings(self) -> dict:
+        out = {k: self.cfg.get(k) for k in CONFIG_FIELDS}
+        out["backend_key_set"] = bool(out.pop("backend_key", ""))
+        out["backend_key"] = ""
+        out["backend"] = out["backend"] or "local"
+        out["model"] = out["model"] or DEFAULT_MODEL
+        out["device"], out["dtype"] = out["device"] or "auto", out["dtype"] or "bfloat16"
+        out["backend_endpoint"] = out["backend_endpoint"] or ""
+        return out
+
+    def state(self) -> dict:
+        return {"status": self.status, "detail": self.detail or self.last_error,
+                "since": self.since, "settings": self.settings()}
+
+    def apply(self, changes: dict, gate: "Gate") -> None:
+        """Start the switch; `state()` says how it goes."""
+        with self._mu:
+            if self.status == "loading":
+                raise RuntimeError("a switch is already in progress")
+            cfg = dict(self.cfg)
+            for k in CONFIG_FIELDS:
+                if k in changes and changes[k] is not None and (k != "backend_key" or changes[k]):
+                    cfg[k] = changes[k]
+            if cfg.get("backend") not in BACKENDS:
+                raise ValueError(f"backend is one of {BACKENDS}, not {cfg.get('backend')!r}")
+            self.status, self.since = "loading", time.time()
+            self.detail = f"starting the {cfg.get('backend')} backend for {cfg.get('model') or DEFAULT_MODEL}"
+        threading.Thread(target=self._switch, args=(cfg, gate), daemon=True).start()
+
+    def _switch(self, cfg: dict, gate: "Gate") -> None:
+        try:
+            new = make_reader(cfg, strict=self.strict)
+        except Exception as e:
+            self.last_error = f"switch failed: {type(e).__name__}: {str(e)[:300]}"
+            self.status = "ready" if self.reader is not None else "error"
+            self.detail, self.since = "", time.time()
+            return
+        with gate.lock:
+            old, self.reader, self.cfg = self.reader, new, cfg
+        self.status, self.detail, self.last_error, self.since = "ready", "", "", time.time()
+        self.save()
+        del old
+        gc.collect()
+        try:
+            import torch
+
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
+def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEFAULT_QUEUE):
+    """The Jev API, served from your own weights — or from an embedding server, or from Jev.
 
     The routes, the request body, the answer objects and the error codes are that API's; a client
     written against it reaches this service by changing the base URL. What is added rather than
     changed: the question type `tfu`, a `logits` field on every answer, the checkpoint's
-    `calibration` on the body, and `/health`.
+    `calibration` on the body, `/health`, and `/admin` — a page that shows the three ways the
+    model can be behind this address and switches between them.
 
-    `api_key` is one token or several (a list, or one string with commas): any of them opens the
-    two `/v1` routes, and without any the service answers anyone who can reach the port.
-    `/health` never asks for a key — it says nothing a caller could not learn from the model card,
-    and an orchestrator has to be able to ask it.
+    `reader` is a `Reading` or a `Service` holding one. `api_key` is one token or several (a
+    list, or one string with commas): any of them opens the `/v1` and `/admin` routes, and
+    without any the service answers anyone who can reach the port. `/health` and the `/admin`
+    page itself never ask for a key.
     """
     from fastapi import Depends, FastAPI, HTTPException, Request
+    from fastapi.responses import HTMLResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-    from .schema import (RESPONSES, Health, ModelMetadataList, SystemOneRequest,
+    from .remote import ApiError
+    from .schema import (RESPONSES, Health, ModelMetadataList, Status, SystemOneRequest,
                          SystemOneResponse)
 
+    svc = reader if isinstance(reader, Service) else Service(reader)
     keys = api_key.split(",") if isinstance(api_key, str) else list(api_key)
     keys = {k.strip() for k in keys if k and k.strip()}
     gate = Gate(queue)
@@ -375,6 +502,12 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
         return HTTPException(422, detail=[{"loc": ["body", *loc], "msg": msg,
                                            "type": "value_error"}])
 
+    def current() -> Reading:
+        if svc.reader is None:
+            raise HTTPException(503, f"no model is loaded ({svc.state()['detail'] or svc.status}); "
+                                     "see /admin")
+        return svc.reader
+
     @app.middleware("http")
     async def tag(request: Request, call_next):
         # A request id ties a client's log line to the server's; the caller's is kept, one is
@@ -387,20 +520,30 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
         return response
 
     @app.get("/health", response_model=Health, tags=["deployment"],
-             summary="Which checkpoint, where, in what form, with which wording")
+             summary="Which model, where, in what form, with which wording")
     def health() -> dict:
-        return {**reader.describe(), "name": reader.served,
-                "max_state_tokens": reader.max_state_tokens,
-                "calibration": reader.prompt_cfg.get("calibration", {}),
-                "auth": bool(keys), "load": gate.load(), "version": app.version,
-                "checks": reader.check(strict=False) or "ok"}
+        st = svc.state()
+        r = svc.reader
+        if r is None:
+            desc = {"backend": svc.cfg.get("backend") or "local",
+                    "model": svc.cfg.get("model") or DEFAULT_MODEL, "labels": [], "device": "",
+                    "dtype": "", "prompt": ""}
+            body = {**desc, "name": "", "max_state_tokens": 0, "calibration": {},
+                    "checks": [st["detail"] or "no model is loaded"]}
+        else:
+            body = {**r.describe(), "name": r.served, "max_state_tokens": r.max_state_tokens,
+                    "calibration": r.prompt_cfg.get("calibration", {}),
+                    "checks": r.check(strict=False) or "ok"}
+        return {**body, "auth": bool(keys), "load": gate.load(), "version": app.version,
+                "status": st["status"], "status_detail": st["detail"]}
 
     guarded = dict(dependencies=[Depends(authorize)], tags=["v1"])
 
-    @app.get("/v1/models", response_model=ModelMetadataList, responses={401: RESPONSES[401]},
-             summary="The checkpoint this service holds, and its alias", **guarded)
+    @app.get("/v1/models", response_model=ModelMetadataList,
+             responses={401: RESPONSES[401], 503: RESPONSES[503]},
+             summary="The model this service holds, and its alias", **guarded)
     def models() -> dict:
-        return {"models": reader.metadata()}
+        return {"models": current().metadata()}
 
     @app.post("/v1/systemone", response_model=SystemOneResponse, responses=RESPONSES,
               summary="Answer questions about one piece of material", **guarded)
@@ -413,10 +556,11 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
         questions were sent under, each of the type its question has. Questions in one call
         read the same state separately, so a bundle costs what the questions cost one by one.
         """
+        r = current()
         questions = {k: q.model_dump() for k, q in req.questions.items()}
         try:
             with gate:
-                answers, tokens = reader.answer_many(req.state, questions)
+                answers, tokens = r.answer_many(req.state, questions)
         except Busy as e:
             raise HTTPException(529, f"The service is at capacity ({gate.queue} waiting); "
                                      f"{e}.", headers={"Retry-After": str(e.wait)}) from e
@@ -424,12 +568,40 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
             raise refuse(str(e), "questions", e.key) from e
         except ValueError as e:
             raise refuse(str(e)) from e
+        except ApiError as e:                   # the upstream refused: its status, its words
+            raise HTTPException(e.status if 400 <= e.status < 500 else 502,
+                                f"upstream: {e.message}") from e
         # `model`, `answers` and `usage` are the Jev body. `calibration` is ours: it belongs to the
         # checkpoint, and a client should not have to guess the temperature its numbers were read
         # at. Nothing is generated here, so `output_tokens` is zero and stays zero.
-        return {"model": reader.served, "answers": answers,
+        return {"model": getattr(r, "upstream_model", r.served), "answers": answers,
                 "usage": {"input_tokens": tokens, "output_tokens": 0},
-                "calibration": reader.prompt_cfg.get("calibration", {})}
+                "calibration": r.prompt_cfg.get("calibration", {})}
+
+    # -- the page: the three ways the model can be behind this address, and the switch ----------
+
+    page = Path(__file__).with_name("admin.html")
+
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    def admin_page() -> str:
+        return page.read_text(encoding="utf-8")
+
+    admin = dict(dependencies=[Depends(authorize)], tags=["admin"])
+
+    @app.get("/admin/config", response_model=Status, responses={401: RESPONSES[401]},
+             summary="Where the model is, and how the switch is going", **admin)
+    def admin_config() -> dict:
+        return svc.state()
+
+    @app.post("/admin/config", response_model=Status, responses={401: RESPONSES[401]},
+              summary="Switch backend or model; the old one answers until the new one is ready",
+              **admin)
+    def admin_apply(changes: dict) -> dict:
+        try:
+            svc.apply(changes, gate)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(409 if "progress" in str(e) else 422, str(e)) from e
+        return svc.state()
 
     return app
 
@@ -437,10 +609,11 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="typecastlm-serve",
-        description="Serve the Jev API from your own weights. Every flag can also be set as "
-                    "TYPECASTLM_<FLAG> in the environment, which is how the Docker image runs.")
+        description="Serve the Jev API from your own weights, from an embedding server, or in "
+                    "front of Jev. Every flag can also be set as TYPECASTLM_<FLAG> in the "
+                    "environment, which is how the Docker image runs; /admin switches at runtime.")
     ap.add_argument("--model", default=env("MODEL", DEFAULT_MODEL),
-                    help="repo id on the Hub, or a directory")
+                    help="repo id on the Hub, or a directory; for --backend jev the upstream model")
     ap.add_argument("--host", default=env("HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(env("PORT", "8000")))
     ap.add_argument("--device", default=env("DEVICE", "auto"))
@@ -458,15 +631,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--queue", type=int, default=int(env("QUEUE", str(DEFAULT_QUEUE))),
                     help="how many requests may wait for the model before the next one is told "
                          "to retry (529 with Retry-After)")
-    ap.add_argument("--backend", default=env("BACKEND", "local"),
-                    choices=["local", "llama", "openai"],
-                    help="where the trunk runs: `local` loads the weights here (torch); `llama` "
+    ap.add_argument("--backend", default=env("BACKEND", "local"), choices=list(BACKENDS),
+                    help="where the model is: `local` loads the weights here (torch); `llama` "
                          "reads a llama-server holding the GGUF; `openai` any server with "
-                         "/v1/embeddings that returns the vector raw")
-    ap.add_argument("--backend-endpoint", default=env("BACKEND_ENDPOINT", "http://127.0.0.1:8080"),
-                    help="address of the embedding server for --backend llama/openai")
-    ap.add_argument("--backend-key", default=env("BACKEND_KEY", ""),
+                         "/v1/embeddings that returns the vector raw; `jev` proxies TypeSafe's Jev")
+    ap.add_argument("--backend-endpoint", default=env("BACKEND_ENDPOINT", ""),
+                    help="address of the embedding server or the upstream API")
+    ap.add_argument("--backend-key", default=env("BACKEND_KEY", "") or os.environ.get("TYPESAFE_API_KEY", ""),
                     help="bearer token that server asks for, if any")
+    ap.add_argument("--config", default=env("CONFIG"),
+                    help="file the settings chosen in /admin are kept in; read before the "
+                         "environment at start")
     a = ap.parse_args(argv)
 
     try:
@@ -477,29 +652,38 @@ def main(argv: list[str] | None = None) -> int:
               "pip install \"typecastlm[local]\" and use typecastlm.Reader", file=sys.stderr)
         return 2
 
-    t0 = time.perf_counter()
-    if a.backend == "local":
-        print(f"typecastlm {_version()}: loading {a.model} …", flush=True)
-        reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,
-                        prompt=a.prompt, max_state_tokens=a.max_state_tokens)
-    else:
-        # The trunk runs elsewhere; this process holds the prompt and the head, and torch is
-        # not imported at all — a service on a machine with no GPU in front of one that has.
-        from .embedding import EmbeddingReader
+    if a.backend == "jev" and a.model == DEFAULT_MODEL:
+        from .remote import JEV_MODEL
 
-        print(f"typecastlm {_version()}: {a.backend} backend at {a.backend_endpoint}, "
-              f"prompt and head for {a.model} …", flush=True)
-        reader = EmbeddingReader(a.backend_endpoint, model=a.model, prompt=a.prompt,
-                                 max_state_tokens=a.max_state_tokens, api=a.backend,
-                                 api_key=a.backend_key, check=not a.no_strict)
-    d = reader.describe()
-    print(f"ready in {time.perf_counter() - t0:.1f} s; prompt: {d['prompt']}; "
-          f"context {reader.max_state_tokens} tokens", flush=True)
-    print(f"checks: {reader.check(strict=False) or 'ok'}", flush=True)
-    print(f"ready on {a.host}:{a.port} as {reader.served}; {len(d['labels'])} labels; "
-          f"{d['backend']} on {d['device']}; auth {'on' if a.api_key else 'OFF'}; "
-          f"queue {a.queue}", flush=True)
-    uvicorn.run(build_app(reader, api_key=a.api_key, queue=a.queue), host=a.host, port=a.port,
+        a.model = JEV_MODEL                      # the upstream's name, not our checkpoint's
+    cfg = {"backend": a.backend, "model": a.model, "device": a.device, "dtype": a.dtype,
+           "max_state_tokens": a.max_state_tokens, "prompt": a.prompt,
+           "backend_endpoint": a.backend_endpoint, "backend_key": a.backend_key}
+    saved = Service.load(a.config)
+    if saved:
+        print(f"settings from {a.config}: {', '.join(k for k in saved if k != 'backend_key')}",
+              flush=True)
+        cfg.update({k: v for k, v in saved.items() if v not in (None, "")})
+    print(f"typecastlm {_version()}: {cfg['backend']} backend, {cfg['model']}"
+          + (f" at {cfg['backend_endpoint']}" if cfg['backend_endpoint'] else "") + " …", flush=True)
+    t0 = time.perf_counter()
+    svc = Service(None, cfg, a.config, strict=not a.no_strict)
+    try:
+        svc.reader = make_reader(cfg, strict=not a.no_strict)
+        svc.status = "ready"
+    except Exception as e:
+        svc.last_error = f"{type(e).__name__}: {str(e)[:300]}"
+        print(f"NO MODEL: {svc.last_error}\n  the service starts anyway: /v1 answers 503, "
+              f"/admin on http://{a.host}:{a.port}/admin lets you fix the settings", flush=True)
+    if svc.reader is not None:
+        d = svc.reader.describe()
+        print(f"ready in {time.perf_counter() - t0:.1f} s; prompt: {d['prompt']}; "
+              f"context {svc.reader.max_state_tokens} tokens", flush=True)
+        print(f"checks: {svc.reader.check(strict=False) or 'ok'}", flush=True)
+        print(f"ready on {a.host}:{a.port} as {svc.reader.served}; {len(d['labels'])} labels; "
+              f"{d['backend']} on {d['device']}; auth {'on' if a.api_key else 'OFF'}; "
+              f"queue {a.queue}", flush=True)
+    uvicorn.run(build_app(svc, api_key=a.api_key, queue=a.queue), host=a.host, port=a.port,
                 log_level="info")
     return 0
 

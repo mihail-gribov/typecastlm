@@ -69,9 +69,10 @@ plain `docker run -e …`.
 | `TYPECASTLM_DEVICE` | `auto` | `auto` takes CUDA when the container sees a GPU |
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
-| `TYPECASTLM_BACKEND` | `local` | `llama` or `openai` puts the API in front of an embedding server instead of loading the weights; no GPU is then needed in this container |
+| `TYPECASTLM_BACKEND` | `local` | `llama` or `openai` puts the API in front of an embedding server, `jev` in front of TypeSafe's Jev; no GPU is then needed in this container |
 | `TYPECASTLM_BACKEND_ENDPOINT` | `http://127.0.0.1:8080` | that server's address, for a remote backend |
-| `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any |
+| `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any; for `jev`, their API key |
+| `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen; read before the environment at start |
 | `HF_TOKEN` | empty | only for a private Hub checkpoint |
 | `BIND`, `PORT` | `127.0.0.1`, `8000` | where the host publishes the port. `BIND=0.0.0.0` opens it to the network — set a key first |
 | `MODELS_DIR` | `./models` | host directory mounted read-only at `/models` |
@@ -91,6 +92,15 @@ is part of what was measured, and the service refuses a checkpoint without it ra
 
 **Your own wording.** Mount the file and set `TYPECASTLM_PROMPT=/models/prompt.json`; `/health`
 then reports `override: …` so a changed wording is visible rather than assumed.
+
+**Choosing in the browser.** `http://localhost:8000/admin` shows the three ways the model can
+be behind this address — the weights here, an embedding server, Jev proxied — with a form for
+each, and switches at runtime: the old backend answers until the new one is loaded, a failed
+switch changes nothing, and the settings that worked are written to
+`/data/hf/typecastlm-config.json` in the `hf-cache` volume, so the container comes back with
+what was chosen rather than with its environment. The page asks for the service's API key when
+one is set. A container whose model cannot be loaded still starts and serves `/admin`, which is
+the point: set `TYPECASTLM_API_KEY`, `docker compose up -d`, then choose in the page.
 
 **In front of a llama-server.** With `TYPECASTLM_BACKEND=llama` the container holds the wording
 and the head and reads the trunk from a llama-server, so the GPU reservation belongs to that

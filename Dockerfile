@@ -15,7 +15,8 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/data/hf \
     HF_HUB_DISABLE_TELEMETRY=1 \
     TYPECASTLM_HOST=0.0.0.0 \
-    TYPECASTLM_PORT=8000
+    TYPECASTLM_PORT=8000 \
+    TYPECASTLM_CONFIG=/data/hf/typecastlm-config.json
 
 # The heavy layers first and on their own, so a change to the package rebuilds seconds, not
 # gigabytes — and torch, the one wheel that is most of the image, on a layer of its own, so a
