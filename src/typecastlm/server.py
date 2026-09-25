@@ -267,6 +267,48 @@ class Reader(Reading):
         out["logits"] = logits
         return out, int(enc["attention_mask"].sum())
 
+    def answer_many(self, state, questions: dict) -> tuple[dict, int]:
+        """Several questions, the state read once (`shared_state`), like the API this follows.
+
+        Yes/no questions and marks questions are worded differently from the first line, so each
+        kind is a batch of its own over the same state. The tokens reported are the ones read:
+        the shared prefix once per batch, and every tail."""
+        if len(questions) < 2:
+            return super().answer_many(state, questions)
+        prepared: dict = {}
+        for key, q in questions.items():
+            if not isinstance(q, dict):
+                raise QuestionError(key, "a question is an object with `type`, `instructions` "
+                                         "and `criteria`")
+            try:
+                prepared[key] = (self.kind_of(q), *self.prepare(state, q))
+            except ValueError as e:
+                raise QuestionError(key, str(e)) from e
+        from . import shared_state             # torch: only once there is a bundle to read
+
+        groups: dict = {}
+        for key, p in prepared.items():
+            groups.setdefault(p[3] is None, []).append(key)
+        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
+        out, tokens = {}, 0
+        for verdict, keys in groups.items():
+            ids = [self.tok(prepared[k][1], add_special_tokens=False)["input_ids"] for k in keys]
+            with self.torch.no_grad():
+                h, n = shared_state.last_hidden(self.model.model, ids, pad, self.device)
+                if verdict:
+                    Z = self.model.score(h.to(self.model.score.weight.dtype))[:, :3].float().cpu()
+            tokens += n
+            for row, k in enumerate(keys):
+                kind, _, names, marks, legend = prepared[k]
+                if verdict:
+                    z = Z[row]
+                else:
+                    hr = h[row].float()
+                    z = [float((self.mark_rows(m) @ hr).max()) for m in marks]
+                logits = {name: float(v) for name, v in zip(names, z)}
+                out[k] = self.read(kind, logits, legend, marks) | {"logits": logits}
+        return {k: out[k] for k in questions}, tokens
+
 
 class Busy(Exception):
     """The waiting room is full; `wait` is how many seconds to suggest."""

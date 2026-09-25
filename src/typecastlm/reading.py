@@ -208,9 +208,10 @@ class Reading:
     def answer_many(self, state, questions: dict) -> tuple[dict, int]:
         """Answer several questions about one state.
 
-        Sharing the prefix across a hybrid trunk is not implemented yet, so the questions are
-        answered one by one and a bundle costs what asking them separately costs. A question
-        that cannot be asked names itself: the error carries the caller's key, so a bundle of
+        This is the fallback, one question at a time: a reader that can share the state
+        overrides it (the local trunk does, `shared_state`; a llama-server keeps no state for
+        embedding requests, so there a bundle costs what its questions cost). A question that
+        cannot be asked names itself: the error carries the caller's key, so a bundle of
         twenty is refused with the one that is wrong.
         """
         out, tokens = {}, 0
