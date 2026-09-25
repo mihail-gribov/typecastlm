@@ -1,0 +1,52 @@
+# The embedder scheme in one command: llama.cpp's own server holds the GGUF and the GPU, ours
+# holds the wording and the head. Layered over docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.llama.yml up -d
+#
+# The GGUF (4 GB, Q8_0) is fetched by name into the llama-cache volume on first start; while the
+# repository is private, HF_TOKEN in .env. Without a GPU use docker-compose.llama-cpu.yml instead.
+services:
+  typecastlm:
+    deploy: !reset {}                        # the GPU belongs to llama below
+    environment:
+      TYPECASTLM_BACKEND: llama
+      TYPECASTLM_BACKEND_ENDPOINT: http://llama:8080
+      TYPECASTLM_MODEL: ${TYPECASTLM_MODEL:-mihailgribov/typecastlm-qwen3.5-3.8b-gguf}
+    depends_on:
+      llama:
+        condition: service_healthy
+
+  llama:
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: typecastlm-llama
+    restart: unless-stopped
+    # -c is the longest prompt the server takes; the model reads states up to 32768 tokens and a
+    # server started with less refuses the long ones rather than truncating. Batches match it
+    # because a pooled embedding needs the whole prompt in one batch.
+    command: ["-hf", "${LLAMA_GGUF:-mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0}",
+              "--embeddings", "-c", "${LLAMA_CTX:-8192}", "-b", "${LLAMA_CTX:-8192}",
+              "-ub", "${LLAMA_CTX:-8192}", "--port", "8080", "--host", "0.0.0.0",
+              "--parallel", "${LLAMA_PARALLEL:-1}", "--kv-unified"]
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      LLAMA_CACHE: /data/cache
+    volumes:
+      # A named volume, or a host directory in the Hub cache's layout: LLAMA_CACHE_DIR=
+      # ~/.cache/huggingface/hub reuses what `hf download` or a host llama-server fetched.
+      - ${LLAMA_CACHE_DIR:-llama-cache}:/data/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 1800s                    # a cold start downloads 4 GB first
+
+volumes:
+  llama-cache:

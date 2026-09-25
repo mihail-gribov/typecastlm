@@ -46,14 +46,22 @@ The service grows into a deployment, and the rest of the Jev API arrives.
 - The service chooses where the trunk runs: `--backend local` loads the weights, `--backend
   llama` or `openai` puts the same Jev API in front of an embedding server, with no torch in the
   process. `/health` names the backend. The full live suite passes on both paths.
+- `docker-compose.llama.yml` and `.llama-cpu.yml`: llama.cpp's own server as a second container
+  that fetches the GGUF by name and takes the GPU, ours in front of it; the embedder scheme in
+  one command. Checked on a CPU host: 27/27 through the two containers.
+- `--concurrency`: requests on the backend at once, 1 for weights held here and 8 for a
+  llama-server or Jev, which queue for themselves; `/health` reports `running` and `slots`.
+- Settings precedence: a flag or a variable given now wins, what `/admin` chose fills in the
+  rest, then the defaults — so a compose overlay pins its backend and a plain `up` keeps the
+  page's choice. The compose defaults are empty for that reason.
 - The service as a proxy: `--backend jev` forwards to TypeSafe's Jev and answers in the same
   shape, translating `tfu` and `scale` levels; `logits` and `marks` are optional in the schema
   because a proxied answer has none.
 - `/admin`: a page showing the three schemes — weights here, an embedding server, Jev proxied
   — drawn, with a form each, switching at runtime through `POST /admin/config`. The old backend
   answers until the new one is loaded, a failed switch leaves it in place, the settings that
-  worked go to `--config` (in Docker, the `hf-cache` volume) and are read before the environment
-  at the next start. A service that cannot load its model still starts and answers 503 on `/v1`.
+  worked go to `--config` (in Docker, the `hf-cache` volume) and fill in, at the next start,
+  whatever the flags and the environment leave unset. A service that cannot load its model still starts and answers 503 on `/v1`.
   Live: 16/16, including the switch Jev → llama-server → Jev.
 - One client for every server that holds the model: `Client(endpoint, api=…)` with `typecastlm`,
   `jev`, `llama`, `openai` or `auto`, `host`/`port` as an alternative to the address, and

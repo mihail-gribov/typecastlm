@@ -188,6 +188,8 @@ class ModelMetadataList(BaseModel):
 
 class Load(BaseModel):
     busy: bool = Field(..., description="Whether a request holds the model right now.")
+    running: int = Field(0, description="Requests on the backend at this moment.")
+    slots: int = Field(1, description="How many may be on it at once: 1 for weights held here.")
     waiting: int = Field(..., description="Requests in line for it.")
     queue: int = Field(..., description="How many may wait before the next gets 529.")
     served: int

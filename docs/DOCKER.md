@@ -66,13 +66,14 @@ plain `docker run -e …`.
 | `TYPECASTLM_API_KEY` | empty | bearer token(s) the `/v1` routes require, comma-separated for several. Empty means the service answers anyone who reaches the port |
 | `TYPECASTLM_MODEL` | `mihailgribov/typecastlm-qwen3.5-3.8b` | a Hub id, or a directory under `/models` |
 | `TYPECASTLM_QUEUE` | 32 | requests allowed to wait for the model; the next one gets `529` with `Retry-After` |
+| `TYPECASTLM_CONCURRENCY` | 1 local, 8 remote | requests on the backend at once; a llama-server with `--parallel` and Jev take several |
 | `TYPECASTLM_DEVICE` | `auto` | `auto` takes CUDA when the container sees a GPU |
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
 | `TYPECASTLM_BACKEND` | `local` | `llama` or `openai` puts the API in front of an embedding server, `jev` in front of TypeSafe's Jev; no GPU is then needed in this container |
 | `TYPECASTLM_BACKEND_ENDPOINT` | empty | that server's address; empty takes the backend's own default (`http://127.0.0.1:8080`, or Jev's `https://api.typesafe.ai`) |
 | `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any; for `jev`, their API key |
-| `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen; read before the environment at start |
+| `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen; fills in whatever the environment leaves empty |
 | `HF_TOKEN` | empty | only for a private Hub checkpoint |
 | `BIND`, `PORT` | `127.0.0.1`, `8000` | where the host publishes the port. `BIND=0.0.0.0` opens it to the network — set a key first |
 | `MODELS_DIR` | `./models` | host directory mounted read-only at `/models` |
@@ -98,9 +99,28 @@ be behind this address — the weights here, an embedding server, Jev proxied �
 each, and switches at runtime: the old backend answers until the new one is loaded, a failed
 switch changes nothing, and the settings that worked are written to
 `/data/hf/typecastlm-config.json` in the `hf-cache` volume, so the container comes back with
-what was chosen rather than with its environment. The page asks for the service's API key when
+what was chosen. A setting written in `.env` wins over the page — that is how the compose
+overlays pin a backend — and one left empty there is the page's to decide. The page asks for the service's API key when
 one is set. A container whose model cannot be loaded still starts and serves `/admin`, which is
 the point: set `TYPECASTLM_API_KEY`, `docker compose up -d`, then choose in the page.
+
+**The embedder scheme in one command.** `docker-compose.llama.yml` adds llama.cpp's own server
+as a second container (a sidecar) that fetches the GGUF by name and takes the GPU, and points ours at it:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.llama.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.llama-cpu.yml up -d     # no GPU
+```
+
+Our container then runs no model — 4 GB for the GGUF instead of 7.5 for the weights, a start in
+seconds, no torch at work — and `/admin` shows the second scheme already chosen. `LLAMA_PARALLEL`
+gives the sidecar slots and our service lets eight requests through at once; on a CPU that is
+slower than one at a time (measured: 106 s against 132 s for the same 16 documents), on a GPU
+it is where a stream of short documents gains, and that number is still to be taken. `LLAMA_CTX` in
+`.env` is the longest prompt the sidecar takes (8192 by default; 32768 for the model's full
+states, at more memory), `LLAMA_GGUF` the file (`…-gguf:Q8_0`, or `:BF16` for the exact one),
+`LLAMA_CACHE_DIR` a host directory with an already-fetched file (`~/.cache/huggingface/hub`). Ollama is not an option here:
+it normalises every embedding and the head cannot be applied to the result.
 
 **In front of a llama-server.** With `TYPECASTLM_BACKEND=llama` the container holds the wording
 and the head and reads the trunk from a llama-server, so the GPU reservation belongs to that

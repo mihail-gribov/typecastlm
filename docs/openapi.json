@@ -610,6 +610,18 @@
       "title": "Busy",
       "description": "Whether a request holds the model right now."
      },
+     "running": {
+      "type": "integer",
+      "title": "Running",
+      "description": "Requests on the backend at this moment.",
+      "default": 0
+     },
+     "slots": {
+      "type": "integer",
+      "title": "Slots",
+      "description": "How many may be on it at once: 1 for weights held here.",
+      "default": 1
+     },
      "waiting": {
       "type": "integer",
       "title": "Waiting",

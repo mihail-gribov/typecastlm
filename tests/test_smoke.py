@@ -193,6 +193,13 @@ def test_the_line_for_the_model_has_an_end():
         with g._mu:
             g.inflight -= 1
     assert not g.load()["busy"] and g.load()["served"] == 1
+    wide = Gate(queue=0, slots=3)               # a backend with slots of its own
+    with wide:
+        with wide:
+            assert wide.load()["running"] == 2 and wide.load()["waiting"] == 0
+    with wide.lock:                             # the switch takes every slot
+        assert wide.sem._value == 0
+    assert wide.sem._value == 3
     with g:                                     # the lock was released
         pass
     assert g.load()["served"] == 2 and g.load()["avg_ms"] >= 0

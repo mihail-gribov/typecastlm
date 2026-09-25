@@ -19,14 +19,17 @@ services:
       - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
     environment:
       TYPECASTLM_PORT: "8000"                  # the container side; PORT above is the host side
-      TYPECASTLM_MODEL: ${TYPECASTLM_MODEL:-mihailgribov/typecastlm-qwen3.5-3.8b}
       TYPECASTLM_API_KEY: ${TYPECASTLM_API_KEY:-}
       TYPECASTLM_QUEUE: ${TYPECASTLM_QUEUE:-32}
-      TYPECASTLM_DTYPE: ${TYPECASTLM_DTYPE:-bfloat16}
+      TYPECASTLM_CONCURRENCY: ${TYPECASTLM_CONCURRENCY:-}
+      # Empty means "what /admin chose last time, else the built-in default"; a value set in
+      # .env pins that setting whatever was chosen in the page.
+      TYPECASTLM_MODEL: ${TYPECASTLM_MODEL:-}
+      TYPECASTLM_DTYPE: ${TYPECASTLM_DTYPE:-}
       TYPECASTLM_MAX_STATE_TOKENS: ${TYPECASTLM_MAX_STATE_TOKENS:-}
-      TYPECASTLM_DEVICE: ${TYPECASTLM_DEVICE:-auto}
-      TYPECASTLM_BACKEND: ${TYPECASTLM_BACKEND:-local}
-      TYPECASTLM_BACKEND_ENDPOINT: ${TYPECASTLM_BACKEND_ENDPOINT:-}   # empty: the backend's own default
+      TYPECASTLM_DEVICE: ${TYPECASTLM_DEVICE:-}
+      TYPECASTLM_BACKEND: ${TYPECASTLM_BACKEND:-}
+      TYPECASTLM_BACKEND_ENDPOINT: ${TYPECASTLM_BACKEND_ENDPOINT:-}
       TYPECASTLM_BACKEND_KEY: ${TYPECASTLM_BACKEND_KEY:-}
       HF_TOKEN: ${HF_TOKEN:-}
     extra_hosts:

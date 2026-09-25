@@ -287,35 +287,64 @@ class Gate:
     times the average request, which is what the caller would have waited.
     """
 
-    def __init__(self, queue: int = DEFAULT_QUEUE):
+    def __init__(self, queue: int = DEFAULT_QUEUE, slots: int = 1):
         self.queue = max(0, int(queue))
-        self.lock = threading.Lock()             # held for the forward passes
+        self.slots = max(1, int(slots))          # requests on the model at once: 1 for weights
+                                                 # in this process, more for a server that has
+                                                 # its own slots (llama-server) or is Jev
+        self.sem = threading.BoundedSemaphore(self.slots)
         self._mu = threading.Lock()              # guards the counters below
         self.inflight = 0                        # running plus waiting
+        self.running = 0
         self.served = 0
         self.avg = 0.0                           # seconds per request, an exponential mean
+        self._t0 = threading.local()
 
     def __enter__(self):
         with self._mu:
-            if self.inflight > self.queue:
-                raise Busy(max(1, math.ceil(self.inflight * (self.avg or 1.0))))
+            if self.inflight - self.slots + 1 > self.queue:
+                raise Busy(max(1, math.ceil(self.inflight * (self.avg or 1.0) / self.slots)))
             self.inflight += 1
-        self.lock.acquire()
-        self._t0 = time.perf_counter()
+        self.sem.acquire()
+        with self._mu:
+            self.running += 1
+        self._t0.value = time.perf_counter()
         return self
 
     def __exit__(self, *exc):
-        dt = time.perf_counter() - self._t0
-        self.lock.release()
+        dt = time.perf_counter() - self._t0.value
+        self.sem.release()
         with self._mu:
             self.inflight -= 1
+            self.running -= 1
             self.served += 1
             self.avg = dt if self.served == 1 else 0.9 * self.avg + 0.1 * dt
         return False
 
+    class _Exclusive:
+        """Every slot held at once: what a reader switch needs, so the swap happens between
+        requests and never under one."""
+
+        def __init__(self, gate):
+            self.gate = gate
+
+        def __enter__(self):
+            for _ in range(self.gate.slots):
+                self.gate.sem.acquire()
+
+        def __exit__(self, *exc):
+            for _ in range(self.gate.slots):
+                self.gate.sem.release()
+            return False
+
+    @property
+    def lock(self):
+        return self._Exclusive(self)
+
     def load(self) -> dict:
         with self._mu:
-            return {"busy": self.lock.locked(), "waiting": max(0, self.inflight - 1),
+            return {"busy": self.running > 0, "running": self.running, "slots": self.slots,
+                    "waiting": max(0, self.inflight - self.running),
                     "queue": self.queue, "served": self.served,
                     "avg_ms": round(self.avg * 1000, 1)}
 
@@ -451,7 +480,8 @@ class Service:
             pass
 
 
-def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEFAULT_QUEUE):
+def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEFAULT_QUEUE,
+              concurrency: int | None = None):
     """The Jev API, served from your own weights — or from an embedding server, or from Jev.
 
     The routes, the request body, the answer objects and the error codes are that API's; a client
@@ -476,7 +506,12 @@ def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEF
     svc = reader if isinstance(reader, Service) else Service(reader)
     keys = api_key.split(",") if isinstance(api_key, str) else list(api_key)
     keys = {k.strip() for k in keys if k and k.strip()}
-    gate = Gate(queue)
+    # One request at a time on weights held here — two on one GPU do not finish sooner — and
+    # several on a backend that queues for itself: a llama-server has its slots, Jev its own
+    # capacity, and serialising them here would only add a line in front of theirs.
+    if concurrency is None:
+        concurrency = 1 if (svc.cfg.get("backend") or "local") == "local" else 8
+    gate = Gate(queue, slots=concurrency)
 
     app = FastAPI(
         title="typecastlm", version=_version(),
@@ -612,12 +647,14 @@ def main(argv: list[str] | None = None) -> int:
         description="Serve the Jev API from your own weights, from an embedding server, or in "
                     "front of Jev. Every flag can also be set as TYPECASTLM_<FLAG> in the "
                     "environment, which is how the Docker image runs; /admin switches at runtime.")
-    ap.add_argument("--model", default=env("MODEL", DEFAULT_MODEL),
+    # Settings that /admin may change later are left None here when neither a flag nor the
+    # environment gives them, so that what was chosen in /admin can fill them in.
+    ap.add_argument("--model", default=env("MODEL"),
                     help="repo id on the Hub, or a directory; for --backend jev the upstream model")
     ap.add_argument("--host", default=env("HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(env("PORT", "8000")))
-    ap.add_argument("--device", default=env("DEVICE", "auto"))
-    ap.add_argument("--dtype", default=env("DTYPE", "bfloat16"))
+    ap.add_argument("--device", default=env("DEVICE"), help="auto, cuda or cpu (default auto)")
+    ap.add_argument("--dtype", default=env("DTYPE"), help="default bfloat16")
     ap.add_argument("--max-state-tokens", type=int,
                     default=int(env("MAX_STATE_TOKENS", "0")) or None,
                     help="how many state tokens to read in full; longer states are folded in the middle")
@@ -631,17 +668,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--queue", type=int, default=int(env("QUEUE", str(DEFAULT_QUEUE))),
                     help="how many requests may wait for the model before the next one is told "
                          "to retry (529 with Retry-After)")
-    ap.add_argument("--backend", default=env("BACKEND", "local"), choices=list(BACKENDS),
+    ap.add_argument("--concurrency", type=int, default=int(env("CONCURRENCY", "0")) or None,
+                    help="requests on the backend at once: 1 for weights in this process (the "
+                         "default there), 8 for an embedding server or Jev (their default)")
+    ap.add_argument("--backend", default=env("BACKEND"), choices=list(BACKENDS),
                     help="where the model is: `local` loads the weights here (torch); `llama` "
                          "reads a llama-server holding the GGUF; `openai` any server with "
                          "/v1/embeddings that returns the vector raw; `jev` proxies TypeSafe's Jev")
-    ap.add_argument("--backend-endpoint", default=env("BACKEND_ENDPOINT", ""),
+    ap.add_argument("--backend-endpoint", default=env("BACKEND_ENDPOINT"),
                     help="address of the embedding server or the upstream API")
-    ap.add_argument("--backend-key", default=env("BACKEND_KEY", "") or os.environ.get("TYPESAFE_API_KEY", ""),
+    ap.add_argument("--backend-key", default=env("BACKEND_KEY") or os.environ.get("TYPESAFE_API_KEY"),
                     help="bearer token that server asks for, if any")
     ap.add_argument("--config", default=env("CONFIG"),
-                    help="file the settings chosen in /admin are kept in; read before the "
-                         "environment at start")
+                    help="file the settings chosen in /admin are kept in; a flag or a variable "
+                         "given here wins, the file fills in the rest")
     a = ap.parse_args(argv)
 
     try:
@@ -652,18 +692,24 @@ def main(argv: list[str] | None = None) -> int:
               "pip install \"typecastlm[local]\" and use typecastlm.Reader", file=sys.stderr)
         return 2
 
-    if a.backend == "jev" and a.model == DEFAULT_MODEL:
+    # Three tiers: a flag or a variable given now, then what /admin chose last time, then the
+    # built-in defaults. A deployment that says nothing keeps its /admin choices across restarts;
+    # one that names a backend in its environment gets that backend.
+    given = {"backend": a.backend, "model": a.model, "device": a.device, "dtype": a.dtype,
+             "max_state_tokens": a.max_state_tokens, "prompt": a.prompt,
+             "backend_endpoint": a.backend_endpoint, "backend_key": a.backend_key}
+    saved = Service.load(a.config)
+    cfg = {k: given[k] if given[k] not in (None, "") else saved.get(k) for k in CONFIG_FIELDS}
+    used = [k for k in CONFIG_FIELDS if given[k] in (None, "") and saved.get(k) not in (None, "")]
+    if used:
+        print(f"from {a.config}: {', '.join(k for k in used if k != 'backend_key')}", flush=True)
+    cfg["backend"] = cfg["backend"] or "local"
+    if cfg["backend"] == "jev" and cfg["model"] in (None, "", DEFAULT_MODEL):
         from .remote import JEV_MODEL
 
-        a.model = JEV_MODEL                      # the upstream's name, not our checkpoint's
-    cfg = {"backend": a.backend, "model": a.model, "device": a.device, "dtype": a.dtype,
-           "max_state_tokens": a.max_state_tokens, "prompt": a.prompt,
-           "backend_endpoint": a.backend_endpoint, "backend_key": a.backend_key}
-    saved = Service.load(a.config)
-    if saved:
-        print(f"settings from {a.config}: {', '.join(k for k in saved if k != 'backend_key')}",
-              flush=True)
-        cfg.update({k: v for k, v in saved.items() if v not in (None, "")})
+        cfg["model"] = JEV_MODEL                 # the upstream's name, not our checkpoint's
+    cfg["model"] = cfg["model"] or DEFAULT_MODEL
+    cfg["backend_endpoint"] = cfg["backend_endpoint"] or ""
     print(f"typecastlm {_version()}: {cfg['backend']} backend, {cfg['model']}"
           + (f" at {cfg['backend_endpoint']}" if cfg['backend_endpoint'] else "") + " …", flush=True)
     t0 = time.perf_counter()
@@ -683,8 +729,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ready on {a.host}:{a.port} as {svc.reader.served}; {len(d['labels'])} labels; "
               f"{d['backend']} on {d['device']}; auth {'on' if a.api_key else 'OFF'}; "
               f"queue {a.queue}", flush=True)
-    uvicorn.run(build_app(svc, api_key=a.api_key, queue=a.queue), host=a.host, port=a.port,
-                log_level="info")
+    uvicorn.run(build_app(svc, api_key=a.api_key, queue=a.queue, concurrency=a.concurrency),
+                host=a.host, port=a.port, log_level="info")
     return 0
 
 

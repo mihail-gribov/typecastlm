@@ -333,8 +333,10 @@ and `/health` reports which wording is in use so a changed one is visible rather
 variable — `TYPECASTLM_MODEL`, `TYPECASTLM_API_KEY`, `TYPECASTLM_PORT` — which is how the
 [Docker image](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md) is configured.
 
-The model answers one request at a time and the rest wait, up to `--queue` of them (32); past
-that the service says `529` with `Retry-After`, and the client retries with the header honoured.
+Weights held here answer one request at a time and the rest wait, up to `--queue` of them (32);
+past that the service says `529` with `Retry-After`, and the client retries with the header
+honoured. A backend that queues for itself — a llama-server with slots, Jev — takes
+`--concurrency` requests at once, eight by default.
 
 Where the trunk runs is `--backend`. `local`, the default, loads the weights into the process.
 `llama` puts the same API in front of a llama-server holding the GGUF, and `openai` in front of
@@ -356,8 +358,8 @@ as the list Jev wants, back under your names — so the address in front never c
 `/health` says which backend answers, and **`/admin`** is a page that shows the three schemes,
 drawn, and switches between them at runtime: pick one, say where, apply. The old backend keeps
 answering until the new one is loaded, a switch that fails leaves the working one in place, and
-the settings that worked are written to `--config` and read before the environment at the
-next start. A service whose model is missing still starts, answers 503 on `/v1`, and says in
+the settings that worked are written to `--config` and fill in, at the next start, whatever the
+flags and the environment leave unset. A service whose model is missing still starts, answers 503 on `/v1`, and says in
 `/admin` what to fix. The reading — prompt, head, temperatures — is the same code on every
 path (`typecastlm.reading`), and `tests/same_reading.py` holds it to the reader shipped beside
 the weights.
