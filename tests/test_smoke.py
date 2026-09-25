@@ -284,6 +284,8 @@ def _embedding_reader(vector):
     r.frame = r.frame or CHAT_FRAME
     r.served, r.name, r.endpoint = "m", "m", "http://x"
     r._tokens, r._can_tokenize = None, True
+    r.labels = list(r.rows)
+    r._matrix()                                 # numpy when there, lists otherwise
     r.vector = lambda text: vector
     r.tokenize = lambda text: list(range(len(text.split())))
     return r
