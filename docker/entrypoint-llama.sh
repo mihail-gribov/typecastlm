@@ -7,6 +7,7 @@
 set -eu
 : "${LLAMA_GGUF:=mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0}"
 : "${LLAMA_CTX:=8192}"
+: "${LLAMA_UBATCH:=2048}"
 : "${LLAMA_PARALLEL:=1}"
 : "${LLAMA_PORT:=8080}"
 : "${LLAMA_WAIT:=1800}"
@@ -14,8 +15,8 @@ set -eu
 
 echo "llama-server: ${LLAMA_GGUF}, context ${LLAMA_CTX}, ${LLAMA_PARALLEL} slot(s) …"
 # shellcheck disable=SC2086
-/app/llama-server -hf "${LLAMA_GGUF}" --embeddings -c "${LLAMA_CTX}" -b "${LLAMA_CTX}" \
-    -ub "${LLAMA_CTX}" --parallel "${LLAMA_PARALLEL}" --kv-unified \
+/app/llama-server -hf "${LLAMA_GGUF}" --embeddings -c "${LLAMA_CTX}" -b "${LLAMA_UBATCH}" \
+    -ub "${LLAMA_UBATCH}" --parallel "${LLAMA_PARALLEL}" --kv-unified \
     --host 127.0.0.1 --port "${LLAMA_PORT}" ${LLAMA_ARGS} &
 LLAMA_PID=$!
 

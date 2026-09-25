@@ -19,8 +19,8 @@ services:
     container_name: typecastlm-llama
     restart: unless-stopped
     command: ["-hf", "${LLAMA_GGUF:-mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0}",
-              "--embeddings", "-c", "${LLAMA_CTX:-8192}", "-b", "${LLAMA_CTX:-8192}",
-              "-ub", "${LLAMA_CTX:-8192}", "--port", "8080", "--host", "0.0.0.0",
+              "--embeddings", "-c", "${LLAMA_CTX:-8192}", "-b", "${LLAMA_UBATCH:-2048}",
+              "-ub", "${LLAMA_UBATCH:-2048}", "--port", "8080", "--host", "0.0.0.0",
               "--parallel", "${LLAMA_PARALLEL:-1}", "--kv-unified",
               "-t", "${LLAMA_THREADS:-8}"]
     environment:

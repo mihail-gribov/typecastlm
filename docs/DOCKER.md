@@ -118,7 +118,8 @@ gives the sidecar slots and our service lets eight requests through at once; on 
 slower than one at a time (measured: 106 s against 132 s for the same 16 documents), on a GPU
 it is where a stream of short documents gains, and that number is still to be taken. `LLAMA_CTX` in
 `.env` is the longest prompt the sidecar takes (8192 by default; 32768 for the model's full
-states, at more memory), `LLAMA_GGUF` the file (`…-gguf:Q8_0`, or `:BF16` for the exact one),
+states, at more memory), `LLAMA_UBATCH` the slice it processes at once (2048; the compute
+buffer grows with it, nine gigabytes at 8192), `LLAMA_GGUF` the file (`…-gguf:Q8_0`, or `:BF16` for the exact one),
 `LLAMA_CACHE_DIR` a host directory with an already-fetched file (`~/.cache/huggingface/hub`). Ollama is not an option here:
 it normalises every embedding and the head cannot be applied to the result.
 

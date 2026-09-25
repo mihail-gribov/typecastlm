@@ -21,11 +21,12 @@ services:
     container_name: typecastlm-llama
     restart: unless-stopped
     # -c is the longest prompt the server takes; the model reads states up to 32768 tokens and a
-    # server started with less refuses the long ones rather than truncating. Batches match it
-    # because a pooled embedding needs the whole prompt in one batch.
+    # server started with less refuses the long ones rather than truncating. The batch is the
+    # slice processed at once and sets the compute buffer: 2048 costs about a gigabyte, 8192
+    # nine, and a long prompt is processed in slices either way.
     command: ["-hf", "${LLAMA_GGUF:-mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0}",
-              "--embeddings", "-c", "${LLAMA_CTX:-8192}", "-b", "${LLAMA_CTX:-8192}",
-              "-ub", "${LLAMA_CTX:-8192}", "--port", "8080", "--host", "0.0.0.0",
+              "--embeddings", "-c", "${LLAMA_CTX:-8192}", "-b", "${LLAMA_UBATCH:-2048}",
+              "-ub", "${LLAMA_UBATCH:-2048}", "--port", "8080", "--host", "0.0.0.0",
               "--parallel", "${LLAMA_PARALLEL:-1}", "--kv-unified"]
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
