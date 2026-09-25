@@ -1,0 +1,49 @@
+# The embedder scheme in one container: llama.cpp's own image, our service installed into it.
+#
+#   docker build -f Dockerfile.llama -t typecastlm-llama .                 # CUDA
+#   docker build -f Dockerfile.llama --build-arg BASE=ghcr.io/ggml-org/llama.cpp:server -t typecastlm-llama .   # CPU
+#   docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-llama:/data/cache \
+#       -e HF_TOKEN=… -e TYPECASTLM_API_KEY=… typecastlm-llama
+#
+# Their server holds the GGUF and the GPU; ours holds the wording and the head, with no torch
+# anywhere — about 200 MB on top of their image. Both start from one entrypoint, ours last and as
+# the main process. Nothing of theirs is rebuilt: a new llama.cpp is a new BASE.
+ARG BASE=ghcr.io/ggml-org/llama.cpp:server-cuda
+FROM ${BASE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/typecastlm
+
+# The service without its weights: the client's one dependency plus the web layer, pinned to the
+# same versions the full image carries (docker/requirements.txt).
+WORKDIR /src
+COPY docker/requirements.txt docker/requirements.txt
+RUN /opt/typecastlm/bin/pip install "$(grep -E '^fastapi==' docker/requirements.txt)" \
+        "$(grep -E '^uvicorn==' docker/requirements.txt)" \
+        "$(grep -E '^requests==' docker/requirements.txt)"
+COPY pyproject.toml README.md LICENSE NOTICE ./
+COPY src src
+RUN /opt/typecastlm/bin/pip install --no-deps . && rm -rf /src /root/.cache
+
+COPY docker/entrypoint-llama.sh /app/typecastlm-entrypoint.sh
+# Their binary finds its libraries next to itself through the working directory; keep theirs.
+WORKDIR /app
+ENV LD_LIBRARY_PATH=/app
+
+# Settings chosen in /admin and the GGUF share one volume; everything else is TYPECASTLM_* and
+# LLAMA_* in the environment (docs/DOCKER.md).
+ENV LLAMA_CACHE=/data/cache \
+    TYPECASTLM_CONFIG=/data/cache/typecastlm-config.json \
+    TYPECASTLM_HOST=0.0.0.0 \
+    TYPECASTLM_PORT=8000
+VOLUME ["/data/cache"]
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=1800s --retries=3 \
+    CMD curl -sf "http://127.0.0.1:${TYPECASTLM_PORT}/health" >/dev/null || exit 1
+ENTRYPOINT ["/app/typecastlm-entrypoint.sh"]

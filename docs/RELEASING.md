@@ -40,8 +40,8 @@ network is fast.
 git tag v1.2.0 && git push origin main v1.2.0
 ```
 
-`.github/workflows/docker.yml` then builds it and pushes `ghcr.io/mihail-gribov/typecastlm:1.2.0`
-and `:latest`. The tag is the package version with a `v`, so the image and the wheel with the
+`.github/workflows/docker.yml` then builds both images and pushes `ghcr.io/mihail-gribov/typecastlm:1.2.0`
+and `ghcr.io/mihail-gribov/typecastlm-llama:1.2.0`, each with `:latest`. The tag is the package version with a `v`, so the image and the wheel with the
 same number are the same code. The first publication needs one manual step on GitHub: the
 package is private until its visibility is set to public in the package settings. Before
 tagging, the same image should have passed `tests/live_service.py` when built locally.

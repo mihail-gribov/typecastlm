@@ -46,6 +46,11 @@ The service grows into a deployment, and the rest of the Jev API arrives.
 - The service chooses where the trunk runs: `--backend local` loads the weights, `--backend
   llama` or `openai` puts the same Jev API in front of an embedding server, with no torch in the
   process. `/health` names the backend. The full live suite passes on both paths.
+- `Dockerfile.llama`: llama.cpp's own image with the service installed into it — one container
+  for the embedder scheme, no torch, 36 MB on top of theirs; one entrypoint starts their server
+  with the GGUF, waits for it, then ours. Published as `ghcr.io/mihail-gribov/typecastlm-llama`
+  by the same workflow. Checked on the CPU base: 27/27. The GGUF readers now default to the
+  repository that holds `prompt.json` and `head.json`.
 - `docker-compose.llama.yml` and `.llama-cpu.yml`: llama.cpp's own server as a second container
   that fetches the GGUF by name and takes the GPU, ours in front of it; the embedder scheme in
   one command. Checked on a CPU host: 27/27 through the two containers.

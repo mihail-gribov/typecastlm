@@ -237,7 +237,7 @@ class Client:
 
         kw = {"api": api, "api_key": self.key}
         if self.files:
-            kw["model"] = self.files
+            kw["model"] = self.files             # else the GGUF repository, which holds both files
         self.transport = EmbeddingReader(self.base, **kw)
         self.api = api
 

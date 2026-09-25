@@ -51,6 +51,7 @@ from pathlib import Path
 from .reading import QuestionError, Reading
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
+DEFAULT_FILES = "mihailgribov/typecastlm-qwen3.5-3.8b-gguf"   # prompt.json + head.json for the GGUF readers
 DEFAULT_QUEUE = 32
 BACKENDS = ("local", "llama", "openai", "jev")
 CONFIG_FIELDS = ("backend", "model", "device", "dtype", "max_state_tokens", "prompt",
@@ -373,8 +374,10 @@ def make_reader(cfg: dict, strict: bool = True) -> Reading:
     if backend in ("llama", "openai"):
         from .embedding import EmbeddingReader
 
+        # The checkpoint's repository has no head.json; the GGUF repository has both files.
+        files = DEFAULT_FILES if model == DEFAULT_MODEL else model
         return EmbeddingReader(cfg.get("backend_endpoint") or "http://127.0.0.1:8080",
-                               model=model, prompt=prompt, max_state_tokens=mst, api=backend,
+                               model=files, prompt=prompt, max_state_tokens=mst, api=backend,
                                api_key=cfg.get("backend_key") or "", check=strict)
     if backend == "jev":
         from .proxy import JevReader

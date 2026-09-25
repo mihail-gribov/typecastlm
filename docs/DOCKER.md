@@ -122,6 +122,22 @@ states, at more memory), `LLAMA_GGUF` the file (`…-gguf:Q8_0`, or `:BF16` for 
 `LLAMA_CACHE_DIR` a host directory with an already-fetched file (`~/.cache/huggingface/hub`). Ollama is not an option here:
 it normalises every embedding and the head cannot be applied to the result.
 
+**Or one container: their image with ours inside.** `Dockerfile.llama` takes llama.cpp's own
+image as its base and installs the service into it — no torch, about 200 MB on top of theirs —
+and one entrypoint starts their server with the GGUF, waits for it, then ours in front:
+
+```
+docker build -f Dockerfile.llama -t typecastlm-llama .
+docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-llama:/data/cache \
+    -e HF_TOKEN=… -e TYPECASTLM_API_KEY=… typecastlm-llama
+```
+
+The same image is published as `ghcr.io/mihail-gribov/typecastlm-llama`. The volume holds the
+GGUF and the `/admin` settings; `LLAMA_GGUF`, `LLAMA_CTX`, `LLAMA_PARALLEL` and `LLAMA_ARGS`
+reach their server. For a host without a GPU, build with
+`--build-arg BASE=ghcr.io/ggml-org/llama.cpp:server`. A new llama.cpp is a new base, nothing
+of theirs is rebuilt here.
+
 **In front of a llama-server.** With `TYPECASTLM_BACKEND=llama` the container holds the wording
 and the head and reads the trunk from a llama-server, so the GPU reservation belongs to that
 server, not to this one: run the two side by side, or this one on a CPU host with

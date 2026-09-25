@@ -28,7 +28,7 @@ from pathlib import Path
 
 from .reading import Reading
 
-DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
+DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b-gguf"   # holds prompt.json and head.json
 DEFAULT_ENDPOINT = "http://127.0.0.1:8080"
 HUB = "https://huggingface.co/{repo}/resolve/main/{file}"
 CACHE = Path(os.environ.get("TYPECASTLM_CACHE", Path.home() / ".cache" / "typecastlm"))
