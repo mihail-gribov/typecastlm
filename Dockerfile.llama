@@ -26,8 +26,7 @@ WORKDIR /src
 COPY docker/requirements.txt docker/requirements.txt
 RUN /opt/typecastlm/bin/pip install "$(grep -E '^fastapi==' docker/requirements.txt)" \
         "$(grep -E '^uvicorn==' docker/requirements.txt)" \
-        "$(grep -E '^requests==' docker/requirements.txt)" \
-        "$(grep -E '^numpy==' docker/requirements.txt)"
+        "$(grep -E '^requests==' docker/requirements.txt)" numpy==2.4.2
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY src src
 RUN /opt/typecastlm/bin/pip install --no-deps . && rm -rf /src /root/.cache

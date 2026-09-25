@@ -13,7 +13,6 @@ safetensors==0.7.0
 tokenizers==0.22.2
 jinja2>=3.1
 einops==0.8.2
-numpy==2.4.2
 # The linear-attention kernels the hybrid trunk wants on CUDA; without them p50 triples.
 # Off the GPU the service hides them, so the same image serves a CPU too.
 fla-core==0.5.2

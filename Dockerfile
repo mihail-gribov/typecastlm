@@ -21,8 +21,10 @@ ENV PYTHONUNBUFFERED=1 \
 # gigabytes — and torch, the one wheel that is most of the image, on a layer of its own, so a
 # broken download of anything else does not fetch it again.
 WORKDIR /app
+# torch's pin is repeated here on purpose: a layer that read it from requirements.txt would be
+# rebuilt — 900 MB, twenty minutes — whenever any other line of that file changed.
+RUN pip install --retries 10 --timeout 120 torch==2.10.0
 COPY docker/requirements.txt docker/requirements.txt
-RUN pip install --retries 10 --timeout 120 "$(grep -E '^torch==' docker/requirements.txt)"
 RUN pip install --retries 10 --timeout 120 -r docker/requirements.txt
 
 # Then the package itself, from this tree rather than from PyPI: the image tracks the checkout.
