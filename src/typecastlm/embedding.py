@@ -68,9 +68,13 @@ class EmbeddingReader(Reading):
         if api_key:
             self._s.headers["Authorization"] = f"Bearer {api_key}"
         self._can_tokenize: bool | None = None   # learned on first use
-        self.prompt_cfg = json.loads(Path(self._file("prompt.json", prompt)).read_text("utf-8"))
+        pf = self._file("prompt.json", prompt)
+        self.prompt_cfg = json.loads(Path(pf).read_text("utf-8"))
+        self.prompt_source = (f"override: {prompt}" if prompt else
+                              "model directory" if Path(self.name).is_dir() else "model repository")
         head_cfg = json.loads(Path(self._file("head.json", head)).read_text("utf-8"))
         self.rows: dict[str, list[list[float]]] = head_cfg["rows"]
+        self.labels = list(self.rows)
         self.hidden = int(head_cfg["hidden_size"])
         self.frame = self.prompt_cfg.get("chat_frame", CHAT_FRAME)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
@@ -155,20 +159,36 @@ class EmbeddingReader(Reading):
         v = _floats(data[0]) if data else _floats(got)
         return v, (int(usage["prompt_tokens"]) if "prompt_tokens" in usage else None)
 
-    def check(self) -> None:
+    def describe(self) -> dict:
+        return {"backend": self.api, "model": self.name, "labels": self.labels,
+                "device": self.endpoint, "dtype": "as served", "prompt": self.prompt_source}
+
+    def check(self, strict: bool = True) -> list[str]:
         """Is this server the trunk, read the right way? A normalised vector has length one and
         a mean-pooled one is short: the trunk's last state after the final norm is long, and
-        that is what the head was built against."""
-        v = self.vector("check")
+        that is what the head was built against. With `strict` a mismatch raises; without,
+        it is returned, for `/health` to show."""
+        try:
+            v = self.vector("check")
+        except Exception as e:
+            if strict:
+                raise
+            return [f"the embedding server does not answer: {e}"]
         n = sum(x * x for x in v) ** 0.5
+        bad = []
         if abs(n - 1.0) < 1e-3:
+            bad.append(f"the server returns unit vectors over its {self.api} route")
+        missing = [f for f in self.PROMPT_FIELDS if f not in self.prompt_cfg]
+        if missing:
+            bad.append(f"prompt.json is missing {missing}")
+        if bad and strict:
             hint = ("llama-server: start it so the native /embedding route is there"
                     if self.api == "openai" else "check the server's pooling and normalisation")
-            raise RuntimeError(f"the server returns unit vectors over its {self.api} route: it "
-                               "normalises embeddings, and the head cannot be applied to a "
-                               f"normalised vector — {hint}; vLLM takes "
+            raise RuntimeError("; ".join(bad) + f": a normalised vector keeps the winner and "
+                               f"loses the probabilities — {hint}; vLLM takes "
                                "--override-pooler-config '{\"pooling_type\": \"LAST\", "
                                "\"normalize\": false}'")
+        return bad
 
     # -- what Reading asks for ------------------------------------------------------------------
 

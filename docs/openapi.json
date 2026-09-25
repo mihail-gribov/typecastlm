@@ -14,7 +14,7 @@
     "tags": [
      "deployment"
     ],
-    "summary": "Which checkpoint, where, with which wording",
+    "summary": "Which checkpoint, where, in what form, with which wording",
     "operationId": "health_health_get",
     "responses": {
      "200": {
@@ -366,6 +366,11 @@
    },
    "Health": {
     "properties": {
+     "backend": {
+      "type": "string",
+      "title": "Backend",
+      "description": "Where the trunk runs: `local` (the weights in this process), `llama` (a llama-server with the GGUF) or `openai` (a server speaking /v1/embeddings)."
+     },
      "model": {
       "type": "string",
       "title": "Model",
@@ -385,7 +390,8 @@
      },
      "device": {
       "type": "string",
-      "title": "Device"
+      "title": "Device",
+      "description": "The device for a local backend, the server's address for a remote one."
      },
      "dtype": {
       "type": "string",
@@ -435,6 +441,7 @@
     },
     "type": "object",
     "required": [
+     "backend",
      "model",
      "name",
      "labels",

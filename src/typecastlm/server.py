@@ -15,6 +15,11 @@ Every flag has an environment variable of the same name under `TYPECASTLM_` (`TY
 `TYPECASTLM_PORT`, `TYPECASTLM_API_KEY`, …), which is how the Docker image is configured: the
 container runs `typecastlm-serve` with no arguments and reads its environment.
 
+Where the trunk runs is a choice, `--backend`: `local` loads the weights into this process,
+`llama` reads a llama-server that holds the GGUF, `openai` any server with `/v1/embeddings`
+that returns the vector raw. The API is the same in front of all three; the head, the wording
+and the reading are this package's whichever it is (`typecastlm.reading`).
+
 The routes, the request body, the answer objects and the error codes are the Jev API's, field for
 field, so a client written against that interface reaches this service by changing the base URL:
 `POST /v1/systemone` answers questions, `GET /v1/models` names the checkpoint, a bearer token
@@ -186,31 +191,24 @@ class Reader(Reading):
                 f"fall back on: the wording is part of what was measured. Pass one with "
                 f"--prompt (see model/prompt.json in the typecastlm repository)") from e
 
-    def metadata(self) -> list[dict]:
-        """What `GET /v1/models` lists: the checkpoint under its own name, and the alias
-        `typecastlm-latest`, both in the shape the Jev API gives a model — name, description,
-        release date. A process serves one checkpoint, so the list has one model and one alias,
-        and a request naming either (or anything else) is answered by it.
+    def release_date(self) -> str:
+        """The checkpoint's `release_date` from `prompt.json` when it carries one, else the day
+        its `config.json` was written — a download date for a Hub checkpoint, which is why the
+        key is the honest source and the file date only the fallback."""
+        if self.prompt_cfg.get("release_date"):
+            return str(self.prompt_cfg["release_date"])
+        try:
+            from transformers.utils import cached_file
 
-        The date is the checkpoint's `release_date` from `prompt.json` when it carries one, else
-        the day its `config.json` was written — a download date for a Hub checkpoint, which is
-        why the key is the honest source and the file date only the fallback.
-        """
-        date = self.prompt_cfg.get("release_date")
-        if not date:
-            try:
-                from transformers.utils import cached_file
+            stamp = Path(cached_file(self.name, "config.json")).stat().st_mtime
+            return _dt.date.fromtimestamp(stamp).isoformat()
+        except Exception:                        # no config on disk: the date is unknown
+            return "unknown"
 
-                stamp = Path(cached_file(self.name, "config.json")).stat().st_mtime
-                date = _dt.date.fromtimestamp(stamp).isoformat()
-            except Exception:                    # no config on disk: the date is unknown
-                date = "unknown"
-        base = self.prompt_cfg.get("base", "")
-        desc = ("Jev-class decision model with open weights: noul, tfu, choice and score, one "
-                "forward pass each" + (f"; derived from {base}" if base else "") + ".")
-        return [{"name": self.served, "description": desc, "release_date": date},
-                {"name": "typecastlm-latest", "release_date": date,
-                 "description": f"Alias of {self.served}, the one checkpoint this service holds."}]
+    def describe(self) -> dict:
+        return {"backend": "local", "model": self.name, "labels": self.labels,
+                "device": str(self.device), "dtype": str(next(self.model.parameters()).dtype),
+                "prompt": self.prompt_source}
 
     def fold(self, state: str) -> str:
         ids = self.tok.encode(state, add_special_tokens=False)
@@ -389,11 +387,10 @@ def build_app(reader: Reader, api_key: str | list[str] | set[str] = "",
         return response
 
     @app.get("/health", response_model=Health, tags=["deployment"],
-             summary="Which checkpoint, where, with which wording")
+             summary="Which checkpoint, where, in what form, with which wording")
     def health() -> dict:
-        return {"model": reader.name, "name": reader.served, "labels": reader.labels,
-                "device": str(reader.device), "dtype": str(next(reader.model.parameters()).dtype),
-                "prompt": reader.prompt_source, "max_state_tokens": reader.max_state_tokens,
+        return {**reader.describe(), "name": reader.served,
+                "max_state_tokens": reader.max_state_tokens,
                 "calibration": reader.prompt_cfg.get("calibration", {}),
                 "auth": bool(keys), "load": gate.load(), "version": app.version,
                 "checks": reader.check(strict=False) or "ok"}
@@ -461,6 +458,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--queue", type=int, default=int(env("QUEUE", str(DEFAULT_QUEUE))),
                     help="how many requests may wait for the model before the next one is told "
                          "to retry (529 with Retry-After)")
+    ap.add_argument("--backend", default=env("BACKEND", "local"),
+                    choices=["local", "llama", "openai"],
+                    help="where the trunk runs: `local` loads the weights here (torch); `llama` "
+                         "reads a llama-server holding the GGUF; `openai` any server with "
+                         "/v1/embeddings that returns the vector raw")
+    ap.add_argument("--backend-endpoint", default=env("BACKEND_ENDPOINT", "http://127.0.0.1:8080"),
+                    help="address of the embedding server for --backend llama/openai")
+    ap.add_argument("--backend-key", default=env("BACKEND_KEY", ""),
+                    help="bearer token that server asks for, if any")
     a = ap.parse_args(argv)
 
     try:
@@ -471,16 +477,28 @@ def main(argv: list[str] | None = None) -> int:
               "pip install \"typecastlm[local]\" and use typecastlm.Reader", file=sys.stderr)
         return 2
 
-    print(f"typecastlm {_version()}: loading {a.model} …", flush=True)
     t0 = time.perf_counter()
-    reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,
-                    prompt=a.prompt, max_state_tokens=a.max_state_tokens)
-    print(f"loaded in {time.perf_counter() - t0:.1f} s; prompt: {reader.prompt_source}; "
+    if a.backend == "local":
+        print(f"typecastlm {_version()}: loading {a.model} …", flush=True)
+        reader = Reader(a.model, device=a.device, dtype=a.dtype, strict=not a.no_strict,
+                        prompt=a.prompt, max_state_tokens=a.max_state_tokens)
+    else:
+        # The trunk runs elsewhere; this process holds the prompt and the head, and torch is
+        # not imported at all — a service on a machine with no GPU in front of one that has.
+        from .embedding import EmbeddingReader
+
+        print(f"typecastlm {_version()}: {a.backend} backend at {a.backend_endpoint}, "
+              f"prompt and head for {a.model} …", flush=True)
+        reader = EmbeddingReader(a.backend_endpoint, model=a.model, prompt=a.prompt,
+                                 max_state_tokens=a.max_state_tokens, api=a.backend,
+                                 api_key=a.backend_key, check=not a.no_strict)
+    d = reader.describe()
+    print(f"ready in {time.perf_counter() - t0:.1f} s; prompt: {d['prompt']}; "
           f"context {reader.max_state_tokens} tokens", flush=True)
     print(f"checks: {reader.check(strict=False) or 'ok'}", flush=True)
-    print(f"ready on {a.host}:{a.port} as {reader.served}; {len(reader.labels)} labels; "
-          f"device {reader.device}; auth {'on' if a.api_key else 'OFF'}; queue {a.queue}",
-          flush=True)
+    print(f"ready on {a.host}:{a.port} as {reader.served}; {len(d['labels'])} labels; "
+          f"{d['backend']} on {d['device']}; auth {'on' if a.api_key else 'OFF'}; "
+          f"queue {a.queue}", flush=True)
     uvicorn.run(build_app(reader, api_key=a.api_key, queue=a.queue), host=a.host, port=a.port,
                 log_level="info")
     return 0

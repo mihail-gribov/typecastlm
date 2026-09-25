@@ -29,9 +29,9 @@ Running the model in this process instead of calling a service:
 """
 from .calibrate import calibrate
 from .embedding import EmbeddingReader
-from .remote import Answer, Choice, Client, Ternary
+from .remote import Answer, ApiError, Choice, Client, Ternary
 
-__all__ = ["Client", "Answer", "Ternary", "Choice", "Reader", "EmbeddingReader", "calibrate"]
+__all__ = ["Client", "Answer", "Ternary", "Choice", "ApiError", "Reader", "EmbeddingReader", "calibrate"]
 
 
 def __getattr__(name: str):

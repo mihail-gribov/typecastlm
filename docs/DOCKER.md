@@ -69,6 +69,9 @@ plain `docker run -e …`.
 | `TYPECASTLM_DEVICE` | `auto` | `auto` takes CUDA when the container sees a GPU |
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
+| `TYPECASTLM_BACKEND` | `local` | `llama` or `openai` puts the API in front of an embedding server instead of loading the weights; no GPU is then needed in this container |
+| `TYPECASTLM_BACKEND_ENDPOINT` | `http://127.0.0.1:8080` | that server's address, for a remote backend |
+| `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any |
 | `HF_TOKEN` | empty | only for a private Hub checkpoint |
 | `BIND`, `PORT` | `127.0.0.1`, `8000` | where the host publishes the port. `BIND=0.0.0.0` opens it to the network — set a key first |
 | `MODELS_DIR` | `./models` | host directory mounted read-only at `/models` |
@@ -88,6 +91,14 @@ is part of what was measured, and the service refuses a checkpoint without it ra
 
 **Your own wording.** Mount the file and set `TYPECASTLM_PROMPT=/models/prompt.json`; `/health`
 then reports `override: …` so a changed wording is visible rather than assumed.
+
+**In front of a llama-server.** With `TYPECASTLM_BACKEND=llama` the container holds the wording
+and the head and reads the trunk from a llama-server, so the GPU reservation belongs to that
+server, not to this one: run the two side by side, or this one on a CPU host with
+`docker-compose.cpu.yml`, and point `TYPECASTLM_BACKEND_ENDPOINT` at the llama-server
+(`http://host.docker.internal:8080` for one on the same machine outside Docker). `TYPECASTLM_MODEL`
+then names where `prompt.json` and `head.json` come from, the GGUF repository:
+`mihailgribov/typecastlm-qwen3.5-3.8b-gguf`. The image is the same, torch simply stays unused.
 
 ## What it serves
 

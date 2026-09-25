@@ -25,7 +25,12 @@ services:
       TYPECASTLM_DTYPE: ${TYPECASTLM_DTYPE:-bfloat16}
       TYPECASTLM_MAX_STATE_TOKENS: ${TYPECASTLM_MAX_STATE_TOKENS:-}
       TYPECASTLM_DEVICE: ${TYPECASTLM_DEVICE:-auto}
+      TYPECASTLM_BACKEND: ${TYPECASTLM_BACKEND:-local}
+      TYPECASTLM_BACKEND_ENDPOINT: ${TYPECASTLM_BACKEND_ENDPOINT:-http://127.0.0.1:8080}
+      TYPECASTLM_BACKEND_KEY: ${TYPECASTLM_BACKEND_KEY:-}
       HF_TOKEN: ${HF_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # a llama-server on this machine, outside Docker
     volumes:
       # The Hub cache: the checkpoint is downloaded once and survives rebuilds and restarts.
       - hf-cache:/data/hf

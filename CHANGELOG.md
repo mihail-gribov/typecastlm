@@ -43,6 +43,16 @@ The service grows into a deployment, and the rest of the Jev API arrives.
   server that normalises. `docs/LAUNCHERS.md`.
 - The prompt and the reading of logits moved into `typecastlm.reading`, shared by the service's
   reader and the launcher's; `tests/same_reading.py` still agrees 4/4.
+- The service chooses where the trunk runs: `--backend local` loads the weights, `--backend
+  llama` or `openai` puts the same Jev API in front of an embedding server, with no torch in the
+  process. `/health` names the backend. The full live suite passes on both paths.
+- One client for every server that holds the model: `Client(endpoint, api=…)` with `typecastlm`,
+  `jev`, `llama`, `openai` or `auto`, `host`/`port` as an alternative to the address, and
+  `Client.jev()` for TypeSafe's Jev at its own address with `TYPESAFE_API_KEY`. Against Jev,
+  `scale` levels travel as the list its API defines and come back under your names, `tfu` is
+  asked as a `choice` with a third option and says `native=False`, and errors arrive as
+  `ApiError` with the status and Jev's message. `models()` and `info()` say what is at the
+  other end. Checked live against Jev: 7/7.
 
 **Changed**
 

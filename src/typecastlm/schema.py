@@ -191,10 +191,14 @@ class Load(BaseModel):
 
 class Health(BaseModel):
     """The deployment: which checkpoint, where, with which wording — what your numbers came from."""
+    backend: str = Field(..., description="Where the trunk runs: `local` (the weights in this "
+                                          "process), `llama` (a llama-server with the GGUF) or "
+                                          "`openai` (a server speaking /v1/embeddings).")
     model: str = Field(..., description="The checkpoint as it was loaded: a Hub id or a path.")
     name: str = Field(..., description="Its short name, the one answers carry.")
     labels: list[str]
-    device: str
+    device: str = Field(..., description="The device for a local backend, the server's address "
+                                         "for a remote one.")
     dtype: str
     prompt: str = Field(..., description="Where the wording came from: the model directory, the "
                                          "model repository, or `override: <path>`.")

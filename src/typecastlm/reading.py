@@ -53,6 +53,32 @@ class Reading:
         """One question: the answer body and the tokens read."""
         raise NotImplementedError
 
+    def describe(self) -> dict:
+        """What `/health` says about this reader: where the model is and in what form."""
+        raise NotImplementedError
+
+    def check(self, strict: bool = True) -> list[str]:
+        """What does not fit the interface; raises when `strict` and something does not."""
+        raise NotImplementedError
+
+    def release_date(self) -> str:
+        return str(self.prompt_cfg.get("release_date") or "unknown")
+
+    served: str
+
+    def metadata(self) -> list[dict]:
+        """What `GET /v1/models` lists: the checkpoint under its own name, and the alias
+        `typecastlm-latest`, both in the shape the Jev API gives a model — name, description,
+        release date. A process serves one checkpoint, so the list has one model and one alias,
+        and a request naming either (or anything else) is answered by it."""
+        date = self.release_date()
+        base = self.prompt_cfg.get("base", "")
+        desc = ("Jev-class decision model with open weights: noul, tfu, choice and score, one "
+                "forward pass each" + (f"; derived from {base}" if base else "") + ".")
+        return [{"name": self.served, "description": desc, "release_date": date},
+                {"name": "typecastlm-latest", "release_date": date,
+                 "description": f"Alias of {self.served}, the one checkpoint this service holds."}]
+
     # -- the prompt -----------------------------------------------------------------------------
 
     def build(self, state: str, instructions: str, true: str, false: str) -> str:

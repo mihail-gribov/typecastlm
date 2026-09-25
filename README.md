@@ -96,6 +96,21 @@ export TYPECASTLM_ENDPOINT=https://your-service
 export TYPECASTLM_API_KEY=…               # only if your service asks for one
 ```
 
+The same client reaches whichever server holds the model. `api` names it and the address says
+where; `auto`, the default, recognises Jev by its host and asks anything else what it is:
+
+```python
+Client("http://localhost:8000")                    # typecastlm-serve
+Client("localhost:8080", api="llama")              # llama-server with the GGUF, read here
+Client("http://gpu-box:8000", api="openai")        # any server speaking /v1/embeddings
+Client.jev(api_key="…")                            # TypeSafe's Jev, the API this copies
+```
+
+Against Jev the answers carry probabilities and no `logits`, `scale` levels go as a list and come
+back under your names, and `tfu`, which Jev does not have, is asked as a `choice` with a third
+option and marked `native=False`. Errors arrive as `ApiError` with the status and the message,
+whichever shape the server gave them in.
+
 The first two download the checkpoint once — 7.5 GB, 3.8B parameters, derived from Qwen3.5-4B —
 and run it on a GPU; the numbers below were taken on a 16 GB consumer card. On CUDA, add the kernels the hybrid trunk wants — without them it falls
 back to a slow path and p50 triples:
@@ -320,6 +335,22 @@ variable — `TYPECASTLM_MODEL`, `TYPECASTLM_API_KEY`, `TYPECASTLM_PORT` — whi
 
 The model answers one request at a time and the rest wait, up to `--queue` of them (32); past
 that the service says `529` with `Retry-After`, and the client retries with the header honoured.
+
+Where the trunk runs is `--backend`. `local`, the default, loads the weights into the process.
+`llama` puts the same API in front of a llama-server holding the GGUF, and `openai` in front of
+any server with `/v1/embeddings` that returns the vector raw; the process then holds only the
+wording and the head, imports no torch, and can sit on a machine with no GPU in front of one
+that has:
+
+```
+llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0 --embeddings --port 8080
+typecastlm-serve --backend llama --backend-endpoint http://127.0.0.1:8080 \
+    --model mihailgribov/typecastlm-qwen3.5-3.8b-gguf --port 8000
+```
+
+`/health` says which backend answers. The reading — prompt, head, temperatures — is the same
+code on both paths (`typecastlm.reading`), and `tests/same_reading.py` holds it to the reader
+shipped beside the weights.
 
 ## Using the model without any of this
 

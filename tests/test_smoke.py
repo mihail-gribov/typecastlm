@@ -322,3 +322,79 @@ def test_the_launcher_reader_reads_the_head_like_the_service():
     assert body["answers"]["q"]["type"] == "tfu" and body["usage"]["output_tokens"] == 0
     v = Client(transport=r).noul("s", "?", true="a", false="b")
     assert v.prob == pytest.approx(a["noul"]) and v.margin == pytest.approx((2.0 - 0.5) / t)
+
+
+def _jev(answers, usage=None):
+    """A client against a Jev-shaped server: probabilities, no logits, no calibration."""
+    from typecastlm import Client
+
+    c = Client.jev(api_key="k")
+    sent = []
+
+    def post(body):
+        sent.append(body)
+        return ({"model": "jev-1.13.0", "answers": answers,
+                 "usage": usage or {"input_tokens": 120, "output_tokens": 12}}, 1.0)
+
+    c._post = post
+    return c, sent
+
+
+def test_jev_is_a_backend_with_its_own_address_key_and_model(monkeypatch):
+    from typecastlm import Client
+    from typecastlm.remote import JEV_ENDPOINT, JEV_MODEL
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "from-env")
+    c = Client.jev()
+    assert c.api == "jev" and c.base == JEV_ENDPOINT and c.model == JEV_MODEL
+    assert c.key == "from-env" and c.timeout == 30.0 and c.native_tfu is False
+    assert Client("https://api.typesafe.ai", api_key="k").api == "jev"     # by its host
+    assert Client(host="gpu", port=8090, api="typecastlm").base == "http://gpu:8090"
+    assert Client("localhost:8000", api="typecastlm").endpoint == "http://localhost:8000/v1/systemone"
+    with pytest.raises(ValueError):
+        Client("http://x", api="grpc")
+
+
+def test_jev_answers_from_probabilities_alone():
+    c, sent = _jev({"q": {"type": "noul", "noul": 0.95}})
+    a = c.noul("s", "covered?", true="yes", false="no")
+    assert a.prob == 0.95 and a.logits is None and a.model == "jev-1.13.0"
+    assert a.margin == pytest.approx(math.log(0.95 / 0.05))
+    assert sent[0]["model"] == "jev-latest" and sent[0]["questions"]["q"]["type"] == "noul"
+
+
+def test_tfu_on_jev_is_a_choice_with_a_third_option():
+    from typecastlm.remote import UNSURE
+
+    c, sent = _jev({"q": {"type": "choice", "choice": "unsure", "confidence": 0.9,
+                          "probabilities": {"true": 0.05, "false": 0.05, "unsure": 0.9}}})
+    t = c.tfu("s", "supported?", true="supported", false="contradicted")
+    q = sent[0]["questions"]["q"]
+    assert q["type"] == "choice" and list(q["criteria"]) == ["true", "false", "unsure"]
+    assert q["criteria"]["unsure"] == UNSURE
+    assert t.native is False and t.verdict == "unsure" and t.p["unsure"] == 0.9
+    assert t.logits is None
+
+
+def test_levels_go_as_a_list_and_come_back_under_your_names():
+    c, sent = _jev({"q": {"type": "score", "score": 1.03, "confidence": 0.94,
+                          "legend": {"0": "calm", "1": "annoyed", "2": "angry"},
+                          "probabilities": {"0": 0.03, "1": 0.91, "2": 0.06}}})
+    s = c.scale("s", "how angry?", {"calm": "calm", "annoyed": "annoyed", "angry": "angry"})
+    assert sent[0]["questions"]["q"]["criteria"] == ["calm", "annoyed", "angry"]
+    assert list(s.p) == ["calm", "annoyed", "angry"] and s.verdict == "annoyed"
+    assert s.score == pytest.approx(0.91 + 2 * 0.06)
+    s2 = c.scale("s", "how angry?", ["calm", "annoyed", "angry"])          # a list works too
+    assert list(s2.p) == ["0", "1", "2"]
+
+
+def test_the_error_carries_the_message_whatever_its_shape():
+    from typecastlm.remote import _message
+
+    assert _message('{"detail": {"error_type": "api_usage_error", "message": "Unknown model: x"}}') \
+        == "Unknown model: x"
+    assert _message('{"detail": [{"loc": ["body", "questions", "q", "criteria"], '
+                    '"msg": "Input should be a valid list", "type": "list_type"}]}') \
+        == "questions.q.criteria: Input should be a valid list"
+    assert _message('{"detail": "no questions"}') == "no questions"
+    assert _message("<html>gateway</html>") == "<html>gateway</html>"
