@@ -351,14 +351,11 @@ class Gate:
 
 
 def _version() -> str:
-    try:
-        from importlib.metadata import version
+    """The package's own number: one source, `typecastlm.__version__`, so a source tree and an
+    installed copy of another version cannot disagree about what is serving."""
+    from . import __version__
 
-        return version("typecastlm")
-    except Exception:                            # a source tree that is not installed
-        from . import __version__
-
-        return __version__
+    return __version__
 
 
 def make_reader(cfg: dict, strict: bool = True) -> Reading:
