@@ -104,6 +104,7 @@ $('key').value = localStorage.getItem('typecastlm_key') || '';
 $('key').addEventListener('change', () => { localStorage.setItem('typecastlm_key', $('key').value); refresh(); });
 
 function pick(b) {
+  if ($('backend').value !== b && !(b === 'openai' || $('backend').value === 'openai')) $('backend_endpoint').value = '';   // another scheme, another address
   $('backend').value = b;
   document.querySelectorAll('.scheme').forEach(e => e.classList.toggle('on', e.dataset.b === b || (b === 'openai' && e.dataset.b === 'llama')));
   const emb = b === 'llama' || b === 'openai', jev = b === 'jev';

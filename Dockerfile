@@ -15,8 +15,7 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/data/hf \
     HF_HUB_DISABLE_TELEMETRY=1 \
     TYPECASTLM_HOST=0.0.0.0 \
-    TYPECASTLM_PORT=8000 \
-    TYPECASTLM_CONFIG=/data/hf/typecastlm-config.json
+    TYPECASTLM_PORT=8000
 
 # The heavy layers first and on their own, so a change to the package rebuilds seconds, not
 # gigabytes — and torch, the one wheel that is most of the image, on a layer of its own, so a
@@ -36,6 +35,9 @@ RUN useradd --create-home --uid 1000 typecast \
     && mkdir -p /data/hf /models \
     && chown -R typecast:typecast /data
 USER typecast
+# Settings chosen in /admin live in the volume, beside the weights, so a restart keeps them.
+# (Set here, below the library layers: an ENV above them would rebuild all of them.)
+ENV TYPECASTLM_CONFIG=/data/hf/typecastlm-config.json
 VOLUME ["/data/hf"]
 EXPOSE 8000
 

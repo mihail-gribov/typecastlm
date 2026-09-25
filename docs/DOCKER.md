@@ -70,7 +70,7 @@ plain `docker run -e …`.
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
 | `TYPECASTLM_BACKEND` | `local` | `llama` or `openai` puts the API in front of an embedding server, `jev` in front of TypeSafe's Jev; no GPU is then needed in this container |
-| `TYPECASTLM_BACKEND_ENDPOINT` | `http://127.0.0.1:8080` | that server's address, for a remote backend |
+| `TYPECASTLM_BACKEND_ENDPOINT` | empty | that server's address; empty takes the backend's own default (`http://127.0.0.1:8080`, or Jev's `https://api.typesafe.ai`) |
 | `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any; for `jev`, their API key |
 | `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen; read before the environment at start |
 | `HF_TOKEN` | empty | only for a private Hub checkpoint |
