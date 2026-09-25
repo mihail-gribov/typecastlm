@@ -46,6 +46,8 @@ The service grows into a deployment, and the rest of the Jev API arrives.
 - The service chooses where the trunk runs: `--backend local` loads the weights, `--backend
   llama` or `openai` puts the same Jev API in front of an embedding server, with no torch in the
   process. `/health` names the backend. The full live suite passes on both paths.
+- The head through numpy when it is there (`typecastlm[embed]`, and the images): one matrix
+  product a question instead of 3 ms of Python; without numpy the reading is unchanged.
 - `Dockerfile.llama`: llama.cpp's own image with the service installed into it — one container
   for the embedder scheme, no torch, 36 MB on top of theirs; one entrypoint starts their server
   with the GGUF, waits for it, then ours. Published as `ghcr.io/mihail-gribov/typecastlm-llama`

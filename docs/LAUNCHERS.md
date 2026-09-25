@@ -21,7 +21,8 @@ c = Client(transport=EmbeddingReader("http://127.0.0.1:8080"))
 c.noul(doc, "Is the claim covered?", true="the policy covers it", false="it excludes it").prob
 ```
 
-`EmbeddingReader` needs `requests` and nothing else: it builds the prompt from `prompt.json`,
+`EmbeddingReader` needs `requests` and nothing else (`pip install typecastlm[embed]` adds numpy,
+and the head becomes one matrix product instead of 3 ms of Python a question): it builds the prompt from `prompt.json`,
 asks the server for the trunk's last hidden state, applies `head.json` and reads the logits at
 the mode's temperature. Both files come from the model directory when the GGUF sits beside the
 checkpoint, or from the Hub with a plain GET, cached under `~/.cache/typecastlm`; a private

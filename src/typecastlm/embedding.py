@@ -76,6 +76,7 @@ class EmbeddingReader(Reading):
         self.rows: dict[str, list[list[float]]] = head_cfg["rows"]
         self.labels = list(self.rows)
         self.hidden = int(head_cfg["hidden_size"])
+        self._matrix()
         self.frame = self.prompt_cfg.get("chat_frame", CHAT_FRAME)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         missing = [f for f in self.PROMPT_FIELDS if f not in self.prompt_cfg]
@@ -214,9 +215,29 @@ class EmbeddingReader(Reading):
     def has_mark(self, mark: str) -> bool:
         return f"mark_{mark}" in self.rows
 
+    def _matrix(self) -> None:
+        """The head as one matrix when numpy is there: every row of every name stacked, and for
+        each name the slice of rows that are its. Without numpy the rows stay lists and the
+        reading is the same arithmetic in Python — 3 ms a question instead of a fraction of one,
+        and the client keeps its single dependency."""
+        try:
+            import numpy as np
+        except ImportError:                      # pragma: no cover - the requests-only install
+            self._np, self._W = None, None
+            return
+        self._np = np
+        self._W = np.asarray([r for n in self.labels for r in self.rows[n]], dtype=np.float32)
+        self._slice, at = {}, 0
+        for n in self.labels:
+            self._slice[n] = slice(at, at + len(self.rows[n]))
+            at += len(self.rows[n])
+
     def logits_of(self, h: list[float], names: list[str]) -> list[float]:
         """One number per name: the largest dot product over the name's rows (a mark's two
         surface forms, read by the stronger, never their mean)."""
+        if self._np is not None:
+            z = self._W @ self._np.asarray(h, dtype=self._np.float32)
+            return [float(z[self._slice[n]].max()) for n in names]
         return [max(sum(a * b for a, b in zip(row, h)) for row in self.rows[n]) for n in names]
 
     def answer(self, state, q: dict) -> tuple[dict, int]:
