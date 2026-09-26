@@ -1,8 +1,12 @@
-# The service in Docker
+# The container
 
-One image, one command, and the Jev API is on port 8000 of your own machine. The image holds the
-code and the libraries at the versions the numbers were measured with; the weights are not in it —
-they arrive once, into a volume, and stay there across rebuilds.
+`ghcr.io/mihail-gribov/typecastlm` is the service in a box: the Jev API on one port, and behind
+it the model in whichever of three places you choose — the weights in the container, an
+embedding server elsewhere, or TypeSafe's Jev proxied. One image serves all three; the choice is
+a setting, made in `.env` or in the browser at `/admin`, and can be changed while the container
+runs. The image holds the code and the libraries at the versions the numbers were measured
+with; the weights are not in it — they arrive once, into a volume, and stay there across
+rebuilds and restarts.
 
 ```
 docker run -d --name typecastlm --gpus all -p 127.0.0.1:8000:8000 \
@@ -10,8 +14,8 @@ docker run -d --name typecastlm --gpus all -p 127.0.0.1:8000:8000 \
 curl localhost:8000/health
 ```
 
-The image is published at `ghcr.io/mihail-gribov/typecastlm`, tagged with the package version
-(`1.2.0`) and `latest`. With the repository checked out, compose reads the settings from `.env`:
+Tags: the package version (`1.2.0`) and `latest`. With the repository checked out, compose
+reads the settings from `.env`:
 
 ```
 git clone https://github.com/mihail-gribov/typecastlm && cd typecastlm
@@ -29,6 +33,19 @@ export TYPECASTLM_ENDPOINT=http://localhost:8000 TYPECASTLM_API_KEY=…
 python -c "from typecastlm import Client; print(Client().noul('The pipe burst overnight.', 'Is this a sudden event?', true='sudden', false='gradual').prob)"
 ```
 
+## Three places for the model
+
+| scheme | `TYPECASTLM_BACKEND` | what runs in this container | what it needs | what comes back |
+|---|---|---|---|---|
+| **weights here** | `local` (default) | the whole model, torch on CUDA | a GPU with 16 GB, `nvidia-container-toolkit` on the host | probabilities, `logits`, the calibration |
+| **an embedding server** | `llama` or `openai` | the wording and the head only; the trunk is read as a vector from llama-server (the GGUF) or any server speaking `/v1/embeddings` unnormalised | no GPU in this container; the server's address in `TYPECASTLM_BACKEND_ENDPOINT` | the same, within 0.014 in probability for the Q8_0 file |
+| **Jev, proxied** | `jev` | a translator: every request goes to `api.typesafe.ai` under their key | `TYPECASTLM_BACKEND_KEY` = their API key | probabilities only, no `logits`; `tfu` asked as a choice with a third option, marked `native: false` |
+
+The API in front is the same in all three, so a caller does not know which is behind the
+address, and `/health` says which. The reading — prompt, head, temperatures — is the package's
+own code in the first two; the third has no model of ours at all. The second scheme is how the
+model runs on a machine without CUDA in Docker, and how one GPU serves several containers.
+
 ## What the host needs
 
 | | GPU | CPU |
@@ -39,45 +56,52 @@ python -c "from typecastlm import Client; print(Client().noul('The pipe burst ov
 | disk | 8 GB for the image, 8 GB for the weights | the same |
 | a decision | 50 ms on short material, half a second at 4k tokens | about ten seconds on short material, on 24 cores |
 
-The toolkit is one package and one command on Ubuntu:
+The toolkit is a repository and one package on Ubuntu:
 
 ```
-sudo apt-get install -y nvidia-container-toolkit
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi     # should list the card
 ```
 
 Without it `docker compose up` fails with `could not select device driver "nvidia"`. A host with
-no GPU at all runs the CPU layer instead, which drops the device reservation and pins the model to
-the processor:
+no GPU at all runs the CPU layer instead, which drops the device reservation and pins the model
+to the processor — slow, but the same numbers:
 
 ```
-docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
 ```
 
 ## Settings
 
 All of them in `.env` beside the compose file; `.env.example` lists them with their defaults.
 The container itself reads `TYPECASTLM_*` from its environment, so the same names work with
-plain `docker run -e …`.
+plain `docker run -e …`. Three tiers decide each setting: a value given in the environment wins,
+what `/admin` chose last time fills in what the environment leaves empty, then the built-in
+default. A deployment that says nothing keeps its `/admin` choices across restarts; one that
+names a backend in `.env` gets that backend.
 
 | variable | default | |
 |---|---|---|
-| `TYPECASTLM_API_KEY` | empty | bearer token(s) the `/v1` routes require, comma-separated for several. Empty means the service answers anyone who reaches the port |
-| `TYPECASTLM_MODEL` | `mihailgribov/typecastlm-qwen3.5-3.8b` | a Hub id, or a directory under `/models` |
-| `TYPECASTLM_QUEUE` | 32 | requests allowed to wait for the model; the next one gets `529` with `Retry-After` |
-| `TYPECASTLM_CONCURRENCY` | 1 local, 8 remote | requests on the backend at once; a llama-server with `--parallel` and Jev take several |
-| `TYPECASTLM_DEVICE` | `auto` | `auto` takes CUDA when the container sees a GPU |
+| `TYPECASTLM_API_KEY` | empty | bearer token(s) the `/v1` and `/admin` routes require, comma-separated for several. Empty means the service answers anyone who reaches the port |
+| `TYPECASTLM_BACKEND` | `local` | `local`, `llama`, `openai` or `jev` — the table above |
+| `TYPECASTLM_BACKEND_ENDPOINT` | the backend's own | the embedding server's address, or the upstream API's; `http://127.0.0.1:8080` and `https://api.typesafe.ai` when empty. A llama-server on the same machine outside Docker is `http://host.docker.internal:8080` |
+| `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any; for `jev`, their API key |
+| `TYPECASTLM_MODEL` | `mihailgribov/typecastlm-qwen3.5-3.8b` | a Hub id or a directory under `/models`: the weights for `local`; `prompt.json` and `head.json` for an embedding backend (the GGUF repository `mihailgribov/typecastlm-qwen3.5-3.8b-gguf` holds both, and is the default there); the upstream model name for `jev` |
+| `TYPECASTLM_DEVICE` | `auto` | `auto` takes CUDA when the container sees a GPU; `cpu` otherwise |
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
-| `TYPECASTLM_BACKEND` | `local` | `llama` or `openai` puts the API in front of an embedding server, `jev` in front of TypeSafe's Jev; no GPU is then needed in this container |
-| `TYPECASTLM_BACKEND_ENDPOINT` | empty | that server's address; empty takes the backend's own default (`http://127.0.0.1:8080`, or Jev's `https://api.typesafe.ai`) |
-| `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any; for `jev`, their API key |
-| `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen; fills in whatever the environment leaves empty |
-| `HF_TOKEN` | empty | only for a private Hub checkpoint |
+| `TYPECASTLM_QUEUE` | 32 | requests allowed to wait for the model; the next one gets `529` with `Retry-After` |
+| `TYPECASTLM_CONCURRENCY` | 1 local, 8 remote | requests on the backend at once; weights held here take one, a server with slots of its own or Jev take several |
+| `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen — in the `hf-cache` volume, beside the weights |
+| `HF_TOKEN` | empty | for a private Hub repository (the GGUF repository, while it is) |
 | `BIND`, `PORT` | `127.0.0.1`, `8000` | where the host publishes the port. `BIND=0.0.0.0` opens it to the network — set a key first |
 | `MODELS_DIR` | `./models` | host directory mounted read-only at `/models` |
-| `IMAGE_TAG` | `latest` | tag of the built image |
+| `IMAGE`, `IMAGE_TAG` | the published image, `latest` | `IMAGE=typecastlm` for a local build |
 
 **Weights you already have.** Put the checkpoint directory (the files of the model repository:
 `config.json`, `*.safetensors`, the tokenizer, `prompt.json`) under `MODELS_DIR` and point
@@ -94,60 +118,54 @@ is part of what was measured, and the service refuses a checkpoint without it ra
 **Your own wording.** Mount the file and set `TYPECASTLM_PROMPT=/models/prompt.json`; `/health`
 then reports `override: …` so a changed wording is visible rather than assumed.
 
-**Choosing in the browser.** `http://localhost:8000/admin` shows the three ways the model can
-be behind this address — the weights here, an embedding server, Jev proxied — with a form for
-each, and switches at runtime: the old backend answers until the new one is loaded, a failed
-switch changes nothing, and the settings that worked are written to
-`/data/hf/typecastlm-config.json` in the `hf-cache` volume, so the container comes back with
-what was chosen. A setting written in `.env` wins over the page — that is how the compose
-overlays pin a backend — and one left empty there is the page's to decide. The page asks for the service's API key when
-one is set. A container whose model cannot be loaded still starts and serves `/admin`, which is
-the point: set `TYPECASTLM_API_KEY`, `docker compose up -d`, then choose in the page.
+## Choosing in the browser
 
-**The embedder scheme in one command.** `docker-compose.llama.yml` adds llama.cpp's own server
-as a second container (a sidecar) that fetches the GGUF by name and takes the GPU, and points ours at it:
+`http://localhost:8000/admin` draws the three schemes, with a form for each, and switches
+between them while the container runs: the old backend keeps answering until the new one is
+loaded, a switch that fails leaves the working one in place and says why, and the settings that
+worked are written to the config file in the volume, so the container comes back with what was
+chosen. The page asks for the service's API key when one is set; `/health` and the page itself
+never do. A container whose model cannot be loaded — no GPU, a wrong name, an upstream that does
+not answer — still starts, answers `503` on `/v1`, and shows in `/admin` what to fix; that is the
+point of it: `docker compose up -d`, then choose.
+
+## The compose files
+
+| file | what it adds |
+|---|---|
+| `docker-compose.yml` | the service on one GPU, the `hf-cache` volume, `/models` from `MODELS_DIR` |
+| `docker-compose.cpu.yml` | layered over it for a host without a GPU: no device reservation, the model on the processor |
+| `docker-compose.llama.yml` | the second scheme in one command: llama.cpp's own image as a second container that fetches the GGUF by name and takes the GPU, ours pointed at it. Nothing of theirs is built into our image; the same setting reaches any embedding server, in a container or not |
+| `docker-compose.llama-cpu.yml` | the same pair on a host without a GPU |
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.llama.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.llama-cpu.yml up -d     # no GPU
 ```
 
-Our container then runs no model and `/admin` shows the second scheme already chosen. The
-sidecar is llama.cpp's own image, unchanged; nothing of theirs is built into ours, and the
-same setting reaches any other embedding server, in a container or not. `LLAMA_PARALLEL`
-gives the sidecar slots and our service lets eight requests through at once; on a CPU that is
-slower than one at a time (measured: 106 s against 132 s for the same 16 documents), on a GPU
-it is where a stream of short documents gains, and that number is still to be taken. `LLAMA_CTX` in
-`.env` is the longest prompt the sidecar takes (8192 by default; 32768 for the model's full
-states, at more memory), `LLAMA_UBATCH` the slice it processes at once (2048; the compute
-buffer grows with it, nine gigabytes at 8192), `LLAMA_GGUF` the file (`…-gguf:Q8_0`, or `:BF16` for the exact one),
-`LLAMA_CACHE_DIR` a host directory with an already-fetched file (`~/.cache/huggingface/hub`). Ollama is not an option here:
-it normalises every embedding and the head cannot be applied to the result.
-
-**In front of a llama-server.** With `TYPECASTLM_BACKEND=llama` the container holds the wording
-and the head and reads the trunk from a llama-server, so the GPU reservation belongs to that
-server, not to this one: run the two side by side, or this one on a CPU host with
-`docker-compose.cpu.yml`, and point `TYPECASTLM_BACKEND_ENDPOINT` at the llama-server
-(`http://host.docker.internal:8080` for one on the same machine outside Docker). `TYPECASTLM_MODEL`
-then names where `prompt.json` and `head.json` come from, the GGUF repository:
-`mihailgribov/typecastlm-qwen3.5-3.8b-gguf`. The image is the same, torch simply stays unused.
+For the sidecar, `.env` takes `LLAMA_GGUF` (`…-gguf:Q8_0`, or `:BF16` for the exact file),
+`LLAMA_CTX` (the longest prompt it takes, 8192; 32768 for the model's full states, at more
+memory), `LLAMA_UBATCH` (the slice processed at once, 2048; the compute buffer grows with it,
+nine gigabytes at 8192), `LLAMA_PARALLEL` (its slots) and `LLAMA_CACHE_DIR` (a host directory
+in the Hub cache's layout, `~/.cache/huggingface/hub`, when the file is already there). Ollama
+is not an option: it normalises every embedding and the head cannot be applied to the result.
 
 ## What it serves
 
 | route | |
 |---|---|
 | `POST /v1/systemone` | the questions; the Jev body, field for field — [API.md](API.md) |
-| `GET /v1/models` | the checkpoint under its name and the alias `typecastlm-latest` |
-| `GET /health` | model, device, dtype, prompt source, calibration, queue load; no key needed |
+| `GET /v1/models` | the model under its name and the alias `typecastlm-latest`; Jev's own list when proxied |
+| `GET /health` | backend, model, device, dtype, prompt source, calibration, queue load, status; no key needed |
+| `GET /admin`, `/admin/config` | the page, and what it reads and writes |
 | `GET /docs`, `/openapi.json` | the schema: every question and answer type, every error. The same file is committed as [openapi.json](openapi.json) |
 
 Every response carries `X-Request-Id` (yours if you sent one) and `X-Process-Time-Ms`, the whole
-request as the server saw it, queue included.
-
-The model answers one request at a time — two on the same GPU do not finish sooner than one
-after the other — and the rest wait in a line of `TYPECASTLM_QUEUE`. Past that the service says
-`529` with a `Retry-After` of the line's length times the average request, which is what the
-caller would have waited; the bundled client retries on it, with the header honoured.
+request as the server saw it, queue included. Weights held here answer one request at a time —
+two on one GPU do not finish sooner than one after the other — and the rest wait in a line of
+`TYPECASTLM_QUEUE`; past that the service says `529` with a `Retry-After` of the line's length
+times the average request, and the bundled client retries on it. A bundle of questions about
+one state reads the state once: the prompts' common prefix runs once and the tails continue
+from it, so twenty questions cost one state and twenty tails.
 
 ## Checking a deployment
 
@@ -160,30 +178,21 @@ python tests/live_service.py http://localhost:8000 "$TYPECASTLM_API_KEY"
 ```
 
 On a GPU it finishes in seconds; on a CPU in a few minutes, and `TYPECASTLM_TIMEOUT` (seconds,
-120 by default) is the client's patience per call.
+120 by default) is the client's patience per call. `docker compose ps` shows the container
+`healthy` once `/health` answers with a loaded model; until then it is `starting`, for up to ten
+minutes on a cold download.
 
-`docker compose ps` shows the container `healthy` once the weights are loaded and `/health`
-answers; until then it is `starting`, for up to ten minutes on a cold download.
-
-## Updating
+## Updating and building
 
 ```
 docker compose pull && docker compose up -d       # the published image
 git pull && docker compose up -d --build          # or rebuilt here; the library layer is cached
+docker build -t typecastlm .                      # the image alone
 ```
 
-The weights are in the `hf-cache` volume and are not touched by a rebuild. To change the pinned
-libraries edit `docker/requirements.txt`, and rerun `tests/live_service.py` against the result
-before shipping it: torch and transformers moving under a fixed checkpoint is how numbers change
-without anyone changing the model.
-
-## Building the image yourself
-
-```
-docker build -t typecastlm .
-docker run -d --name typecastlm --gpus all -p 127.0.0.1:8000:8000 \
-    -v typecastlm-hf:/data/hf -e TYPECASTLM_API_KEY=… typecastlm
-```
-
-Drop `--gpus all` and add `-e TYPECASTLM_DEVICE=cpu` for a host without a GPU. The published
-image is built the same way by `.github/workflows/docker.yml` on every release tag.
+The weights and the `/admin` config are in the `hf-cache` volume and are not touched by a
+rebuild. The pinned libraries are in `docker/requirements.txt` (torch's own pin is in the
+`Dockerfile`, so a change to that file does not rebuild the 900 MB layer); after changing them,
+rerun `tests/live_service.py` against the result before shipping it — torch and transformers
+moving under a fixed checkpoint is how numbers change without anyone changing the model. The
+published image is built the same way by `.github/workflows/docker.yml` on every release tag.

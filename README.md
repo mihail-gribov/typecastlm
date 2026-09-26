@@ -38,6 +38,10 @@ Why this one:
 * **Yours to run** — open weights, one command for a local service, and a client with a single
   dependency for whatever talks to it.
 
+**Deploy it:** the [Docker container](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md)
+serves the API from the weights, from an embedding server, or as a proxy to Jev — one image,
+the choice made in `.env` or in the browser at `/admin`.
+
 ## Install
 
 There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
@@ -369,6 +373,13 @@ the weights.
 The checkpoint is an ordinary classifier with 39 outputs, so `transformers` loads it directly and
 `reader.py` beside the weights reads all four modes. See the
 [model card](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b).
+
+## Documents
+
+* [docs/DOCKER.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md) — the container: three places for the model, settings, the `/admin` page, compose files
+* [docs/API.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md) — the HTTP contract, field for field, and [openapi.json](https://github.com/mihail-gribov/typecastlm/blob/main/docs/openapi.json)
+* [docs/LAUNCHERS.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/LAUNCHERS.md) — the model as a GGUF under llama-server, the head applied by the client
+* [docs/RELEASING.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/RELEASING.md) — what is published where, and how
 
 ## Licence
 
