@@ -257,15 +257,95 @@ class Reader(Reading):
         text, keys, marks, legend = self.prepare(state, q)
         enc = self.tok([text], return_tensors="pt", add_special_tokens=False).to(self.device)
         with self.torch.no_grad():
+            h = self.model.model(**enc).last_hidden_state[0, -1].float()
+        out = self._answer_from(h, q, keys, marks, legend)
+        return out, int(enc["attention_mask"].sum())
+
+    def _answer_from(self, h, q: dict, keys, marks, legend) -> dict:
+        """The answer body from the trunk's last state: the head's three rows for a yes/no
+        question, the marks' rows for a choice or a rubric."""
+        with self.torch.no_grad():
             if marks is None:                    # the three answers always have head rows
-                z = self.model(**enc).logits[0, :3].float().cpu()
+                z = self.model.score(h.to(self.model.score.weight.dtype)).float()[:3].cpu()
             else:
-                h = self.model.model(**enc).last_hidden_state[0, -1].float()
                 z = self.torch.tensor([float((self.mark_rows(m) @ h).max()) for m in marks])
         logits = {k: float(v) for k, v in zip(keys, z)}
         out = self.read(self.kind_of(q), logits, legend, marks)
         out["logits"] = logits
-        return out, int(enc["attention_mask"].sum())
+        return out
+
+    BATCH_ROWS = 16                              # tails read at once from one copy of the cache
+
+    def answer_many(self, state, questions: dict) -> tuple[dict, int]:
+        """Several questions about one state: the state is read once.
+
+        Every question's prompt is tokenised whole; within a family — the two-criteria prompts,
+        or the marked ones, which carry another system line — the longest common token prefix is
+        run once with a cache, and the tails are read as one right-padded batch continuing from
+        a copy of that cache, each row at its own last token. The hybrid trunk's linear layers
+        are continued from the cached state by the patch in `typecastlm.local`; against clean
+        passes the reading moves by 0.005 in probability on average, 0.02 at the 95th percentile.
+        `usage` counts the prefix once and every tail, which is what the state costs.
+        """
+        if len(questions) < 2:
+            return super().answer_many(state, questions)
+        from .local import _expand_cache, _install_continuation
+
+        prepared = {}
+        for key, q in questions.items():
+            if not isinstance(q, dict):
+                raise QuestionError(key, "a question is an object with `type`, `instructions` "
+                                         "and `criteria`")
+            try:
+                prepared[key] = self.prepare(state, q)
+            except ValueError as e:
+                raise QuestionError(key, str(e)) from e
+        families: dict[bool, list[str]] = {}
+        for key, (_, _, marks, _) in prepared.items():
+            families.setdefault(marks is None, []).append(key)
+        out, tokens = {}, 0
+        for keys in families.values():
+            ids = [self.tok(prepared[k][0], add_special_tokens=False)["input_ids"] for k in keys]
+            n = min(map(len, ids)) - 1           # every tail keeps at least its last token
+            for i in range(n):
+                if any(x[i] != ids[0][i] for x in ids):
+                    n = i
+                    break
+            if len(keys) == 1 or n < 16:         # nothing worth sharing
+                for k in keys:
+                    ans, t = self.answer(state, questions[k])
+                    out[k], tokens = ans, tokens + t
+                continue
+            import copy
+            import sys
+
+            mod = sys.modules[type(self.model.model).__module__]
+            _install_continuation(mod)
+            dev = self.device
+            with self.torch.no_grad():
+                cache = mod.Qwen3_5DynamicCache(self.model.model.config)
+                self.model.model(input_ids=self.torch.tensor([ids[0][:n]], device=dev),
+                                 past_key_values=cache, use_cache=True)
+                tails = [x[n:] for x in ids]
+                pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
+                lasts = []
+                for at in range(0, len(tails), self.BATCH_ROWS):
+                    chunk = tails[at: at + self.BATCH_ROWS]
+                    c = cache if at + self.BATCH_ROWS >= len(tails) else copy.deepcopy(cache)
+                    _expand_cache(c, len(chunk))
+                    width = max(map(len, chunk))
+                    batch = self.torch.tensor([t + [pad] * (width - len(t)) for t in chunk],
+                                              device=dev)
+                    h = self.model.model(input_ids=batch, past_key_values=c,
+                                         use_cache=True).last_hidden_state
+                    rows = self.torch.arange(len(chunk), device=dev)
+                    ends = self.torch.tensor([len(t) - 1 for t in chunk], device=dev)
+                    lasts.extend(h[rows, ends].float())
+            tokens += n + sum(map(len, tails))
+            for k, h in zip(keys, lasts):
+                _, qkeys, marks, legend = prepared[k]
+                out[k] = self._answer_from(h, questions[k], qkeys, marks, legend)
+        return {k: out[k] for k in questions}, tokens
 
     def answer_many(self, state, questions: dict) -> tuple[dict, int]:
         """Several questions, the state read once (`shared_state`), like the API this follows.
@@ -630,8 +710,9 @@ def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEF
         """Answer one or more questions about the content supplied in `state`.
 
         Question types may be mixed in one request. Answers come back under the names the
-        questions were sent under, each of the type its question has. Questions in one call
-        read the same state separately, so a bundle costs what the questions cost one by one.
+        questions were sent under, each of the type its question has. The state is read once
+        for the bundle: the questions' common prefix runs once and their tails continue from
+        it, so `usage` counts the state once and each question's tail.
         """
         r = current()
         questions = {k: q.model_dump() for k, q in req.questions.items()}

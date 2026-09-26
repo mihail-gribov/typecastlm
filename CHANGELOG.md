@@ -46,16 +46,20 @@ The service grows into a deployment, and the rest of the Jev API arrives.
 - The service chooses where the trunk runs: `--backend local` loads the weights, `--backend
   llama` or `openai` puts the same Jev API in front of an embedding server, with no torch in the
   process. `/health` names the backend. The full live suite passes on both paths.
+- A bundle reads the state once. In the service and in the local reader the prompts' common
+  token prefix runs once with a cache and the questions' tails are read as one batch continuing
+  from it; the hybrid trunk's linear layers are continued from the cached state by a patch that
+  transformers lacks (it restarts them past one token). Against the questions asked one by one:
+  0.005 in probability on average, 0.02 at the 95th percentile (140 × 3, bf16); on a mixed
+  bundle of six modes 0.017 at worst, and a bundle of six took half the time of six passes on a
+  CPU. `usage.input_tokens` now counts the state once. Developed on a copy in
+  `experiments/72_jev_quadrat`.
 - The head through numpy when it is there (`typecastlm[embed]`, and the images): one matrix
   product a question instead of 3 ms of Python; without numpy the reading is unchanged.
-- `Dockerfile.llama`: llama.cpp's own image with the service installed into it — one container
-  for the embedder scheme, no torch, 36 MB on top of theirs; one entrypoint starts their server
-  with the GGUF, waits for it, then ours. Published as `ghcr.io/mihail-gribov/typecastlm-llama`
-  by the same workflow. Checked on the CPU base: 27/27. The GGUF readers now default to the
-  repository that holds `prompt.json` and `head.json`.
 - `docker-compose.llama.yml` and `.llama-cpu.yml`: llama.cpp's own server as a second container
   that fetches the GGUF by name and takes the GPU, ours in front of it; the embedder scheme in
-  one command. Checked on a CPU host: 27/27 through the two containers.
+  one command, with nothing of theirs built into our image. Checked on a CPU host: 27/27 through
+  the two containers, and on a GPU.
 - `--concurrency`: requests on the backend at once, 1 for weights held here and 8 for a
   llama-server or Jev, which queue for themselves; `/health` reports `running` and `slots`.
 - Settings precedence: a flag or a variable given now wins, what `/admin` chose fills in the

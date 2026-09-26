@@ -112,8 +112,9 @@ docker compose -f docker-compose.yml -f docker-compose.llama.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.llama-cpu.yml up -d     # no GPU
 ```
 
-Our container then runs no model — 4 GB for the GGUF instead of 7.5 for the weights, a start in
-seconds, no torch at work — and `/admin` shows the second scheme already chosen. `LLAMA_PARALLEL`
+Our container then runs no model and `/admin` shows the second scheme already chosen. The
+sidecar is llama.cpp's own image, unchanged; nothing of theirs is built into ours, and the
+same setting reaches any other embedding server, in a container or not. `LLAMA_PARALLEL`
 gives the sidecar slots and our service lets eight requests through at once; on a CPU that is
 slower than one at a time (measured: 106 s against 132 s for the same 16 documents), on a GPU
 it is where a stream of short documents gains, and that number is still to be taken. `LLAMA_CTX` in
@@ -122,22 +123,6 @@ states, at more memory), `LLAMA_UBATCH` the slice it processes at once (2048; th
 buffer grows with it, nine gigabytes at 8192), `LLAMA_GGUF` the file (`…-gguf:Q8_0`, or `:BF16` for the exact one),
 `LLAMA_CACHE_DIR` a host directory with an already-fetched file (`~/.cache/huggingface/hub`). Ollama is not an option here:
 it normalises every embedding and the head cannot be applied to the result.
-
-**Or one container: their image with ours inside.** `Dockerfile.llama` takes llama.cpp's own
-image as its base and installs the service into it — no torch, about 200 MB on top of theirs —
-and one entrypoint starts their server with the GGUF, waits for it, then ours in front:
-
-```
-docker build -f Dockerfile.llama -t typecastlm-llama .
-docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-llama:/data/cache \
-    -e HF_TOKEN=… -e TYPECASTLM_API_KEY=… typecastlm-llama
-```
-
-The same image is published as `ghcr.io/mihail-gribov/typecastlm-llama`. The volume holds the
-GGUF and the `/admin` settings; `LLAMA_GGUF`, `LLAMA_CTX`, `LLAMA_PARALLEL` and `LLAMA_ARGS`
-reach their server. For a host without a GPU, build with
-`--build-arg BASE=ghcr.io/ggml-org/llama.cpp:server`. A new llama.cpp is a new base, nothing
-of theirs is rebuilt here.
 
 **In front of a llama-server.** With `TYPECASTLM_BACKEND=llama` the container holds the wording
 and the head and reads the trunk from a llama-server, so the GPU reservation belongs to that

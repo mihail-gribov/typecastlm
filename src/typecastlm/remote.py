@@ -431,8 +431,8 @@ class Client:
 
     def ask(self, state: str, questions: dict) -> dict:
         """Any number of questions about one state, answered in one call, the answers passed
-        through as the server sent them. The state is read again for each question by our
-        service and once by Jev, and `input_tokens` says which."""
+        through as the server sent them. The state is read once for the bundle, by our service
+        and by Jev alike, and `input_tokens` counts it once."""
         if not questions:
             raise ValueError("no questions")
         data, _ = self._post({"state": state, "model": self.model, "questions": questions})

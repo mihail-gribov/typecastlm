@@ -4,7 +4,7 @@
     tfu(state, question, true, false)      -> {"p": {"true","false","unsure"}, "verdict", "logits"}
     choice(state, question, options)       -> {"p": {option: prob}, "logits", "marks"}
     scale(state, question, levels)         -> same, for an ordinal rubric
-    noul_many(state, questions)            -> one noul() result per question
+    noul_many(state, questions)            -> one noul() result per question, the state read once
 
 The names are the API's, which are Jev's where Jev has the mode; `ask` and `ask_many` still work
 as the older names of `noul` and `noul_many`.
@@ -197,13 +197,96 @@ class Reader:
     def noul_many(self, state: str, questions: list[tuple[str, str, str]]) -> list[dict]:
         """Several `(question, true, false)` about one state, one `noul` result each.
 
-        Sharing the prefix across a hybrid trunk is not implemented: restoring the recurrent state
-        of the linear-attention layers from a copy does not reproduce a clean pass, so the state
-        is read again per question and a bundle costs what the questions cost separately.
+        The state is read once. Every question's prompt is tokenised whole, the longest common
+        token prefix is run with a cache, and the tails are read as one batch continuing from a
+        copy of that cache. Tails are right-padded: the trunk is causal, so padding after a row's
+        last token cannot reach it, and each row is read at its own last token.
         """
         state = self._fold(state)
-        return [self.noul(state, q, t, f) for q, t, f in questions]
+        texts = [self._text(state, q, t, f) for q, t, f in questions]
+        ids = [self.tok(x, add_special_tokens=False)["input_ids"] for x in texts]
+        n = min(len(x) for x in ids) - 1      # every tail keeps at least its last token
+        for k in range(n):
+            if any(x[k] != ids[0][k] for x in ids):
+                n = k
+                break
+        dev = self.model.device
+        cache = self._new_cache()
+        self.trunk(input_ids=torch.tensor([ids[0][:n]], device=dev), past_key_values=cache,
+                   use_cache=True)
+        _expand_cache(cache, len(ids))
+        tails = [x[n:] for x in ids]
+        width = max(map(len, tails))
+        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
+        batch = torch.tensor([t + [pad] * (width - len(t)) for t in tails], device=dev)
+        h = self.trunk(input_ids=batch, past_key_values=cache, use_cache=True).last_hidden_state
+        last = h[torch.arange(len(tails), device=dev),
+                 torch.tensor([len(t) - 1 for t in tails], device=dev)]
+        z = self.model.score(last.to(self.model.score.weight.dtype)).float()[:, :3].tolist()
+        return [self._verdict(v) for v in z]
+
+    def _new_cache(self):
+        """An empty cache of the trunk's own class; installs the linear-layer continuation."""
+        import sys
+        mod = sys.modules[type(self.trunk).__module__]
+        _install_continuation(mod)
+        return mod.Qwen3_5DynamicCache(self.trunk.config)
 
     # The names these two carried in 1.0.0.
     ask = noul
     ask_many = noul_many
+
+
+# -- continuing a hybrid trunk from a cache -----------------------------------------------------
+# transformers continues the linear-attention (gated delta) layers from a cache only one token at
+# a time: a longer chunk restarts the convolution and the recurrence from zero, which is why a
+# shared prefix used to read differently from a clean pass. The patch below continues both from
+# the cached state, for any chunk length.
+
+def _expand_cache(cache, rows: int) -> None:
+    """Repeat a batch-1 cache to `rows` rows, in place."""
+    for name in ("key_cache", "value_cache", "conv_states", "recurrent_states"):
+        lst = getattr(cache, name)
+        for i, t in enumerate(lst):
+            if t is not None:
+                lst[i] = t.expand(rows, *t.shape[1:]).contiguous()
+
+
+def _install_continuation(mod) -> None:
+    cls = mod.Qwen3_5GatedDeltaNet
+    if getattr(cls, "_continues_chunks", False):
+        return
+    plain = cls.forward
+    F = torch.nn.functional
+
+    def forward(self, hidden_states, cache_params=None, cache_position=None, attention_mask=None):
+        B, L, _ = hidden_states.shape
+        if (cache_params is None or not cache_params.has_previous_state or L == 1
+                or cache_params.conv_states[self.layer_idx] is None):
+            return plain(self, hidden_states, cache_params=cache_params,
+                         cache_position=cache_position, attention_mask=attention_mask)
+        i, K = self.layer_idx, self.conv_kernel_size
+        mixed = self.in_proj_qkv(hidden_states).transpose(1, 2)
+        z = self.in_proj_z(hidden_states).reshape(B, L, -1, self.head_v_dim)
+        b, a = self.in_proj_b(hidden_states), self.in_proj_a(hidden_states)
+        x = torch.cat([cache_params.conv_states[i][:, :, -(K - 1):].to(mixed.dtype), mixed], -1)
+        cache_params.conv_states[i] = x[:, :, -K:].contiguous()
+        mixed = F.silu(F.conv1d(x, self.conv1d.weight, None, groups=self.conv_dim)).transpose(1, 2)
+        q, k, v = torch.split(mixed, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
+        q = q.reshape(B, L, -1, self.head_k_dim)
+        k = k.reshape(B, L, -1, self.head_k_dim)
+        v = v.reshape(B, L, -1, self.head_v_dim)
+        beta = b.sigmoid()
+        g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias)
+        if self.num_v_heads // self.num_k_heads > 1:
+            q = q.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
+            k = k.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
+        out, state = self.chunk_gated_delta_rule(
+            q, k, v, g=g, beta=beta, initial_state=cache_params.recurrent_states[i],
+            output_final_state=True, use_qk_l2norm_in_kernel=True)
+        cache_params.recurrent_states[i] = state
+        out = self.norm(out.reshape(-1, self.head_v_dim), z.reshape(-1, self.head_v_dim))
+        return self.out_proj(out.reshape(B, L, -1))
+
+    cls.forward = forward
+    cls._continues_chunks = True

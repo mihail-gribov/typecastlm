@@ -257,9 +257,9 @@ c.ask(policy, {
 Any mix of the four modes in one call, keyed by names you choose; `type` is `noul`, `tfu`,
 `choice` or `score`, which this client also spells `scale`. Unlike the four methods above, this
 one hands back the service's answer objects as they came, so you read the fields yourself — see
-the [API reference](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md). The state is currently read again for each question, so a bundle costs
-what the same questions cost one by one; sharing the prefix across a hybrid trunk is not
-implemented yet.
+the [API reference](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md). The state is read once for the bundle:
+the prompts' common prefix runs once and each question's tail continues from it, so twenty
+questions cost one state and twenty tails, and `input_tokens` says so.
 
 ## Numbers
 

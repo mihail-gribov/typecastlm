@@ -82,7 +82,7 @@
      "v1"
     ],
     "summary": "The same route under its 1.0.0 name",
-    "description": "Answer one or more questions about the content supplied in `state`.\n\nQuestion types may be mixed in one request. Answers come back under the names the\nquestions were sent under, each of the type its question has. Questions in one call\nread the same state separately, so a bundle costs what the questions cost one by one.",
+    "description": "Answer one or more questions about the content supplied in `state`.\n\nQuestion types may be mixed in one request. Answers come back under the names the\nquestions were sent under, each of the type its question has. The state is read once\nfor the bundle: the questions' common prefix runs once and their tails continue from\nit, so `usage` counts the state once and each question's tail.",
     "operationId": "systemone_v1_typecast_post",
     "requestBody": {
      "content": {
@@ -160,7 +160,7 @@
      "v1"
     ],
     "summary": "Answer questions about one piece of material",
-    "description": "Answer one or more questions about the content supplied in `state`.\n\nQuestion types may be mixed in one request. Answers come back under the names the\nquestions were sent under, each of the type its question has. Questions in one call\nread the same state separately, so a bundle costs what the questions cost one by one.",
+    "description": "Answer one or more questions about the content supplied in `state`.\n\nQuestion types may be mixed in one request. Answers come back under the names the\nquestions were sent under, each of the type its question has. The state is read once\nfor the bundle: the questions' common prefix runs once and their tails continue from\nit, so `usage` counts the state once and each question's tail.",
     "operationId": "systemone_v1_systemone_post",
     "requestBody": {
      "content": {

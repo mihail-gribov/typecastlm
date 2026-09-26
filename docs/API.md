@@ -134,8 +134,11 @@ names in your code.
 | `usage.output_tokens` | always 0 — nothing is generated |
 | `calibration` | added here: the temperature per mode, so a caller reading `logits` does not have to guess the one the probabilities were read at |
 
-Questions in one call are answered against the same state but read it separately, so a bundle
-costs what the questions cost one by one.
+Questions in one call share one pass over the state: the prompts' common prefix — the wording,
+the state — is run once, and each question's tail continues from it, so a bundle of twenty
+costs one state and twenty tails, which is what `usage.input_tokens` counts. Against the
+questions asked one by one the probabilities move by 0.005 on average and 0.02 at the 95th
+percentile; a near-tie between two levels of a rubric can flip with them.
 
 ## Answer types
 

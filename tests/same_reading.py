@@ -7,7 +7,7 @@ prompts are compared character by character and the logits by value.
 
 Not part of `pytest`: it needs weights.
 
-    python3 tests/same_reading.py /path/to/checkpoint
+    python3 tests/same_reading.py /path/to/checkpoint [cuda|cpu]
 """
 import sys
 
@@ -17,6 +17,7 @@ from typecastlm.local import Reader
 from typecastlm.server import Reader as Service
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "mihailgribov/typecastlm-qwen3.5-3.8b"
+DEVICE = sys.argv[2] if len(sys.argv) > 2 else "cuda"      # two copies of the model: 15 GB of it
 DOC = ("The policy covers water damage from a burst pipe and excludes damage from repeated "
        "seepage. The claim describes a pipe that burst overnight.")
 CASES = [
@@ -31,7 +32,7 @@ CASES = [
 
 
 def main() -> int:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = DEVICE if DEVICE != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     r = Reader(MODEL, device=device, dtype=dtype)
     s = Service(MODEL, device=device, dtype=str(dtype).replace("torch.", ""))
