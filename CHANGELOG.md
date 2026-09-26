@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.0 — unreleased
+## 1.2.0 — 2026-09-27
 
 The service grows into a deployment, and the rest of the Jev API arrives.
 
