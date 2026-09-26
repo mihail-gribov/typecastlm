@@ -196,4 +196,4 @@ rebuild. The pinned libraries are in `docker/requirements.txt` (torch's own pin 
 `Dockerfile`, so a change to that file does not rebuild the 900 MB layer); after changing them,
 rerun `tests/live_service.py` against the result before shipping it — torch and transformers
 moving under a fixed checkpoint is how numbers change without anyone changing the model. The
-published image is built the same way by `.github/workflows/docker.yml` on every release tag.
+published image is built the same way at each release ([RELEASING.md](RELEASING.md)).

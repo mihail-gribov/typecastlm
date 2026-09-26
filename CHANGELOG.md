@@ -29,8 +29,8 @@ The service grows into a deployment, and the rest of the Jev API arrives.
   the Jev schema describes Jev — until now they said `object`. The same file is committed as
   `docs/openapi.json` (`scripts/export_openapi.py`, and a test that it is current).
 - The image is published: `ghcr.io/mihail-gribov/typecastlm`, tagged with the package version
-  and `latest`, built by `.github/workflows/docker.yml` on a release tag. The compose file pulls
-  it and keeps `--build` as the way to build the same thing here.
+  and `latest`. The compose file pulls it and keeps `--build` as the way to build the same thing
+  here.
 
 - The model under a launcher. The trunk converts to GGUF with the stock llama.cpp converter
   (`scripts/convert_gguf.py`), the head is written as `head.json` (`scripts/export_head.py`),

@@ -33,18 +33,19 @@ Before either: the version in `pyproject.toml`, an entry in `CHANGELOG.md`, `pyt
 
 ## The image
 
-Nothing is pushed from a workstation: the image is 8 GB and a release tag builds it where the
-network is fast.
+Built and pushed by hand from a release checkout, tagged with the package version so the image
+and the wheel with the same number are the same code:
 
 ```
-git tag v1.2.0 && git push origin main v1.2.0
+docker build -t ghcr.io/mihail-gribov/typecastlm:1.2.0 -t ghcr.io/mihail-gribov/typecastlm:latest .
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u mihail-gribov --password-stdin
+docker push ghcr.io/mihail-gribov/typecastlm:1.2.0 && docker push ghcr.io/mihail-gribov/typecastlm:latest
 ```
 
-`.github/workflows/docker.yml` then builds it and pushes `ghcr.io/mihail-gribov/typecastlm:1.2.0`
-and `:latest`. The tag is the package version with a `v`, so the image and the wheel with the
-same number are the same code. The first publication needs one manual step on GitHub: the
+The token needs `write:packages`. The image is 8 GB, most of it the torch layer, which the
+registry keeps between versions. The first publication needs one manual step on GitHub: the
 package is private until its visibility is set to public in the package settings. Before
-tagging, the same image should have passed `tests/live_service.py` when built locally.
+pushing, the same image must have passed `tests/live_service.py`.
 
 ## The model repository
 
