@@ -37,25 +37,33 @@ Why this one:
   0.011–0.052, and refittable on your own rows).
 * **Yours to run** — open weights, one command for a local service, and a client with a single
   dependency for whatever talks to it.
+* **Your own decision model in one command, set up in the browser.** The
+  [Docker container](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md)
+  brings the model up on your machine with the Jev API in front; a page at `/admin` shows where
+  the model can be — the weights here, an embedding server, Jev proxied — and switches between
+  them without a restart.
 
-**Deploy it:** the [Docker container](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md)
-serves the API from the weights, from an embedding server, or as a proxy to Jev — one image,
-the choice made in `.env` or in the browser at `/admin`.
+```
+docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-hf:/data/hf ghcr.io/mihail-gribov/typecastlm
+open http://localhost:8000/admin
+```
 
 ## Install
 
 There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
 newer, and five ways to arrange it, differing in where the model sits.
 
-**In a container** — the published image, with its libraries pinned and the weights in a volume:
+**In a container** — your own local decision model, one command, configured in the browser:
 
 ```
 docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-hf:/data/hf ghcr.io/mihail-gribov/typecastlm
 export TYPECASTLM_ENDPOINT=http://localhost:8000
 ```
 
-A GPU host needs `nvidia-container-toolkit`; a host without a GPU adds
-`-f docker-compose.cpu.yml`. Keys, ports, your own weights: [docs/DOCKER.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md).
+The image pins the libraries and keeps the weights in a volume; `http://localhost:8000/admin`
+is where the model is chosen and switched — the weights here, an embedding server, or Jev
+proxied — with no restart. A GPU host needs `nvidia-container-toolkit`; a host without a GPU
+adds `-f docker-compose.cpu.yml`. Keys, ports, your own weights: [docs/DOCKER.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md).
 
 **Under a launcher** — the trunk as a GGUF in llama-server, the head applied by the client:
 

@@ -1,12 +1,13 @@
 # The container
 
-`ghcr.io/mihail-gribov/typecastlm` is the service in a box: the Jev API on one port, and behind
-it the model in whichever of three places you choose — the weights in the container, an
-embedding server elsewhere, or TypeSafe's Jev proxied. One image serves all three; the choice is
-a setting, made in `.env` or in the browser at `/admin`, and can be changed while the container
-runs. The image holds the code and the libraries at the versions the numbers were measured
-with; the weights are not in it — they arrive once, into a volume, and stay there across
-rebuilds and restarts.
+**Your own decision model, up in one command and set up in the browser.**
+`ghcr.io/mihail-gribov/typecastlm` brings the model up on your machine with the Jev API on one
+port: ask it a closed question about a document, get a probability back, from weights that are
+yours. A page at `/admin` shows where the model can be — the weights in this container, an
+embedding server elsewhere, or TypeSafe's Jev proxied — and switches between them while the
+container runs; the same choice can be made in `.env`. One image serves all three. It holds the
+code and the libraries at the versions the numbers were measured with; the weights are not in
+it — they arrive once, into a volume, and stay there across rebuilds and restarts.
 
 ```
 docker run -d --name typecastlm --gpus all -p 127.0.0.1:8000:8000 \
