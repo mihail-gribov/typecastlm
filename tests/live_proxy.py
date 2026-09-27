@@ -14,7 +14,7 @@ from typecastlm import Client
 
 BASE, KEY = sys.argv[1].rstrip("/"), sys.argv[2]
 LLAMA = sys.argv[3] if len(sys.argv) > 3 else ""
-FILES = sys.argv[4] if len(sys.argv) > 4 else "mihailgribov/typecastlm-qwen3.5-3.8b-gguf"
+FILES = sys.argv[4] if len(sys.argv) > 4 else "mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0"
 H = {"Authorization": f"Bearer {KEY}"}
 DOC = ("The policy covers water damage from a burst pipe and excludes damage from repeated "
        "seepage over time. The claim describes a pipe that burst overnight.")

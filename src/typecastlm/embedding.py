@@ -28,7 +28,7 @@ from pathlib import Path
 
 from .reading import Reading
 
-DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b-gguf"   # holds prompt.json and head.json
+DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"   # weights, GGUF, head and wording together
 DEFAULT_ENDPOINT = "http://127.0.0.1:8080"
 HUB = "https://huggingface.co/{repo}/resolve/main/{file}"
 CACHE = Path(os.environ.get("TYPECASTLM_CACHE", Path.home() / ".cache" / "typecastlm"))
@@ -60,6 +60,11 @@ class EmbeddingReader(Reading):
 
         if api not in ("auto", "llama", "openai"):
             raise ValueError(f"api is auto, llama or openai, not {api!r}")
+        # `repository:tag` names the GGUF the server runs; the files read here — the wording
+        # and the head — come from the repository itself, whatever the tag.
+        self.variant = ""
+        if ":" in model and not model.startswith(("/", ".", "~")) and model.count("/") == 1:
+            model, self.variant = model.rsplit(":", 1)
         self.endpoint, self.name = endpoint.rstrip("/"), model
         self.served = model.rstrip("/").split("/")[-1] or model
         self.served_model = served_model or self.served
@@ -162,7 +167,8 @@ class EmbeddingReader(Reading):
 
     def describe(self) -> dict:
         return {"backend": self.api, "model": self.name, "labels": self.labels,
-                "device": self.endpoint, "dtype": "as served", "prompt": self.prompt_source}
+                "device": self.endpoint, "dtype": self.variant or "as served",
+                "prompt": self.prompt_source}
 
     def check(self, strict: bool = True) -> list[str]:
         """Is this server the trunk, read the right way? A normalised vector has length one and

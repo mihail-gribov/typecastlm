@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- One repository for the model in every form. The GGUF files and `head.json` live beside the
+  safetensors weights in `mihailgribov/typecastlm-qwen3.5-3.8b`, and a tag picks the form the way
+  `llama-server -hf` takes it: `…:Q8_0` and `…:BF16` are the GGUFs, no tag is the weights.
+  `--model` and `TYPECASTLM_MODEL` take `repository[:tag]`; the service refuses a tagged name
+  for weights held here, and for an embedding backend fetches the head and the wording from the
+  same repository. `scripts/publish_gguf.py` uploads the files.
+
 ## 1.2.0 — 2026-09-27
 
 The service grows into a deployment, and the rest of the Jev API arrives.

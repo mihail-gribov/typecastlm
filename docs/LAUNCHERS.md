@@ -6,7 +6,7 @@ directions — three verdict rows and the embedding rows of the 36 marks — and
 dot products. So the model installs like any other GGUF, and the reading happens in the client:
 
 ```
-llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0 --embeddings --port 8080
+llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0 --embeddings --port 8080
 ```
 
 `-hf` fetches the file by repository name into the Hub cache (`~/.cache/huggingface/hub`) on
@@ -26,9 +26,10 @@ and the head becomes one matrix product instead of 3 ms of Python a question): i
 asks the server for the trunk's last hidden state, applies `head.json` and reads the logits at
 the mode's temperature. Both files come from the model directory when the GGUF sits beside the
 checkpoint, or from the Hub with a plain GET, cached under `~/.cache/typecastlm`; a private
-repository is read with the token in `HF_TOKEN`. The files live in
-[mihailgribov/typecastlm-qwen3.5-3.8b-gguf](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b-gguf),
-which `model=` names. The `Client`
+repository is read with the token in `HF_TOKEN`. Everything lives in one repository,
+[mihailgribov/typecastlm-qwen3.5-3.8b](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b)
+— the safetensors weights, the GGUF files, the head, the wording — and a tag picks the form:
+`…:Q8_0` and `…:BF16` are the GGUFs, no tag is the weights. `model=` takes either. The `Client`
 on top is the same object with the same methods as against the service, so code written for one
 runs against the other.
 
@@ -96,7 +97,7 @@ and a 2400-token one in 30 s.
 ## Checking a deployment
 
 ```
-python3 tests/live_launcher.py http://127.0.0.1:8080 mihailgribov/typecastlm-qwen3.5-3.8b-gguf
+python3 tests/live_launcher.py http://127.0.0.1:8080
 ```
 
 The same questions as the service test — four modes, 26 options, a bundle, a folded state, the

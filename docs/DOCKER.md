@@ -92,7 +92,7 @@ names a backend in `.env` gets that backend.
 | `TYPECASTLM_BACKEND` | `local` | `local`, `llama`, `openai` or `jev` — the table above |
 | `TYPECASTLM_BACKEND_ENDPOINT` | the backend's own | the embedding server's address, or the upstream API's; `http://127.0.0.1:8080` and `https://api.typesafe.ai` when empty. A llama-server on the same machine outside Docker is `http://host.docker.internal:8080` |
 | `TYPECASTLM_BACKEND_KEY` | empty | the token that server asks for, if any; for `jev`, their API key |
-| `TYPECASTLM_MODEL` | `mihailgribov/typecastlm-qwen3.5-3.8b` | a Hub id or a directory under `/models`: the weights for `local`; `prompt.json` and `head.json` for an embedding backend (the GGUF repository `mihailgribov/typecastlm-qwen3.5-3.8b-gguf` holds both, and is the default there); the upstream model name for `jev` |
+| `TYPECASTLM_MODEL` | `mihailgribov/typecastlm-qwen3.5-3.8b` | `repository[:tag]`, or a directory under `/models`. One repository holds the model in every form and the tag picks it: no tag is the safetensors weights, for `local`; `:Q8_0` or `:BF16` names the GGUF an embedding server runs, and the head and the wording are fetched from the same repository. For `jev`, the upstream model name |
 | `TYPECASTLM_DEVICE` | `auto` | `auto` takes CUDA when the container sees a GPU; `cpu` otherwise |
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
@@ -143,7 +143,7 @@ point of it: `docker compose up -d`, then choose.
 docker compose -f docker-compose.yml -f docker-compose.llama.yml up -d
 ```
 
-For the sidecar, `.env` takes `LLAMA_GGUF` (`…-gguf:Q8_0`, or `:BF16` for the exact file),
+For the sidecar, `.env` takes `LLAMA_GGUF` (`mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0`, or `:BF16` for the exact file),
 `LLAMA_CTX` (the longest prompt it takes, 8192; 32768 for the model's full states, at more
 memory), `LLAMA_UBATCH` (the slice processed at once, 2048; the compute buffer grows with it,
 nine gigabytes at 8192), `LLAMA_PARALLEL` (its slots) and `LLAMA_CACHE_DIR` (a host directory

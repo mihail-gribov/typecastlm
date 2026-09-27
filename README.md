@@ -357,9 +357,9 @@ wording and the head, imports no torch, and can sit on a machine with no GPU in 
 that has:
 
 ```
-llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b-gguf:Q8_0 --embeddings --port 8080
+llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0 --embeddings --port 8080
 typecastlm-serve --backend llama --backend-endpoint http://127.0.0.1:8080 \
-    --model mihailgribov/typecastlm-qwen3.5-3.8b-gguf --port 8000
+    --model mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0 --port 8000
 ```
 
 The third choice is no model of ours at all: `--backend jev` forwards every request to

@@ -489,3 +489,17 @@ def test_a_switch_keeps_the_old_reader_until_the_new_one_is_ready(monkeypatch):
     assert svc.reader.tag == "new" and "no such checkpoint" in svc.last_error
     with pytest.raises(ValueError):
         svc.apply({"backend": "grpc"}, gate_)
+
+
+def test_one_repository_and_a_tag_for_the_form():
+    """The weights, the GGUFs, the head and the wording share a repository; `:Q8_0` names the
+    GGUF the way `llama-server -hf` takes it, and a path keeps its colons."""
+    from typecastlm.server import make_reader, short_name, split_tag
+
+    assert split_tag("mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0") == ("mihailgribov/typecastlm-qwen3.5-3.8b", "Q8_0")
+    assert split_tag("mihailgribov/typecastlm-qwen3.5-3.8b") == ("mihailgribov/typecastlm-qwen3.5-3.8b", "")
+    assert split_tag("/models/a:b/typecastlm") == ("/models/a:b/typecastlm", "")
+    assert short_name("mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0") == "typecastlm-qwen3.5-3.8b"
+    with pytest.raises(ValueError) as e:       # a GGUF cannot be the weights held here
+        make_reader({"backend": "local", "model": "mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0"})
+    assert "GGUF" in str(e.value)

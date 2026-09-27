@@ -113,8 +113,8 @@ function pick(b) {
   $('f-bkey').classList.toggle('hide', !(emb || jev));
   ['f-device','f-dtype'].forEach(i => $(i).classList.toggle('hide', b !== 'local'));
   $('f-mst').classList.toggle('hide', jev);
-  $('l-model').textContent = jev ? 'Upstream model name' : emb ? 'Where prompt.json and head.json are — Hub repository or directory' : 'Model — Hub repository or directory';
-  $('model').placeholder = jev ? 'jev-latest' : emb ? 'mihailgribov/typecastlm-qwen3.5-3.8b-gguf' : 'mihailgribov/typecastlm-qwen3.5-3.8b';
+  $('l-model').textContent = jev ? 'Upstream model name' : emb ? 'Model — repository:tag of the GGUF the server runs; the head and the wording come from the same repository' : 'Model — Hub repository or directory';
+  $('model').placeholder = jev ? 'jev-latest' : emb ? 'mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0' : 'mihailgribov/typecastlm-qwen3.5-3.8b';
   $('l-endpoint').textContent = jev ? 'Upstream address' : 'Address of the embedding server';
   $('backend_endpoint').placeholder = jev ? 'https://api.typesafe.ai' : 'http://127.0.0.1:8080';
   $('l-bkey').textContent = jev ? 'Their API key' : 'Its key, if it asks for one';

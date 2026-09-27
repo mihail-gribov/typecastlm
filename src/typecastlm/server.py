@@ -51,7 +51,6 @@ from pathlib import Path
 from .reading import QuestionError, Reading
 
 DEFAULT_MODEL = "mihailgribov/typecastlm-qwen3.5-3.8b"
-DEFAULT_FILES = "mihailgribov/typecastlm-qwen3.5-3.8b-gguf"   # prompt.json + head.json for the GGUF readers
 DEFAULT_QUEUE = 32
 BACKENDS = ("local", "llama", "openai", "jev")
 CONFIG_FIELDS = ("backend", "model", "device", "dtype", "max_state_tokens", "prompt",
@@ -64,10 +63,21 @@ def env(name: str, default=None) -> str | None:
     return os.environ.get(f"TYPECASTLM_{name}") or default
 
 
+def split_tag(model: str) -> tuple[str, str]:
+    """`repository:tag` into its two halves. One repository holds the model in every form —
+    the safetensors weights, the GGUF files, the head, the wording — and the tag says which form
+    is meant: none for the weights, `Q8_0` or `BF16` for a GGUF, the way `llama-server -hf`
+    takes it. A path keeps its colons: only a Hub id of the shape `owner/name:tag` is split."""
+    if ":" in model and not model.startswith(("/", ".", "~")) and model.count("/") == 1:
+        repo, tag = model.rsplit(":", 1)
+        return repo, tag
+    return model, ""
+
+
 def short_name(model: str) -> str:
     """The name a checkpoint answers under: the last path segment, so a Hub id and a directory
     give the same word and the answer never carries a filesystem path."""
-    return model.rstrip("/").split("/")[-1] or model
+    return split_tag(model)[0].rstrip("/").split("/")[-1] or model
 
 
 class Reader(Reading):
@@ -485,18 +495,23 @@ def make_reader(cfg: dict, strict: bool = True) -> Reading:
     Jev. Everything above this line is the same whichever it is."""
     backend = cfg.get("backend") or "local"
     model = cfg.get("model") or DEFAULT_MODEL
+    repo, tag = split_tag(model)
     prompt = cfg.get("prompt") or None
     mst = int(cfg.get("max_state_tokens") or 0) or None
     if backend == "local":
-        return Reader(model, device=cfg.get("device") or "auto", dtype=cfg.get("dtype") or "bfloat16",
+        if tag:
+            raise ValueError(f"{model}: the tag {tag!r} names a GGUF, which this process cannot "
+                             "run — weights held here are the safetensors, without a tag; a "
+                             "GGUF runs in an embedding server (backend llama or openai)")
+        return Reader(repo, device=cfg.get("device") or "auto", dtype=cfg.get("dtype") or "bfloat16",
                       strict=strict, prompt=prompt, max_state_tokens=mst)
     if backend in ("llama", "openai"):
         from .embedding import EmbeddingReader
 
-        # The checkpoint's repository has no head.json; the GGUF repository has both files.
-        files = DEFAULT_FILES if model == DEFAULT_MODEL else model
+        # The trunk runs in the embedding server, from the GGUF the tag names; what is fetched
+        # here is the rest of the model, from the same repository: the wording and the head.
         return EmbeddingReader(cfg.get("backend_endpoint") or "http://127.0.0.1:8080",
-                               model=files, prompt=prompt, max_state_tokens=mst, api=backend,
+                               model=model, prompt=prompt, max_state_tokens=mst, api=backend,
                                api_key=cfg.get("backend_key") or "", check=strict)
     if backend == "jev":
         from .proxy import JevReader
