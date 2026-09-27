@@ -100,8 +100,9 @@ run_stage() {
     say "== $s  ${TITLE[$s]}"
     local t0 rc out; t0=$(date +%s)
     # A subshell outside any `if`: inside a condition bash ignores `set -e`, and a step that
-    # failed half way would pass for done.
-    ( set -e; "stage_$s" ) 2>&1 | tee "$ROOT/$s.log"; rc=${PIPESTATUS[0]}
+    # failed half way would pass for done. `pipefail` for the same reason: a stage's output goes
+    # through grep, and without it the stage's status would be grep's.
+    ( set -eo pipefail; "stage_$s" ) 2>&1 | tee "$ROOT/$s.log"; rc=${PIPESTATUS[0]}
     out=$(tail -1 "$ROOT/$s.log")
     if [ "$rc" -eq 0 ]; then
         echo "$out ($(( $(date +%s) - t0 )) s)" > "$RES/$s.ok"; say "   done: $out"
