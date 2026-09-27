@@ -68,7 +68,8 @@ adds `-f docker-compose.cpu.yml`. Keys, ports, your own weights: [docs/DOCKER.md
 **Under a launcher** — the trunk as a GGUF in llama-server, the head applied by the client:
 
 ```
-llama-server -m typecastlm-qwen3.5-3.8b-q8_0.gguf --embeddings --port 8080
+llama-server -hf mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0 --embeddings --port 8080
+pip install "typecastlm[embed]"
 ```
 
 ```python
@@ -76,7 +77,9 @@ from typecastlm import Client, EmbeddingReader
 c = Client(transport=EmbeddingReader("http://127.0.0.1:8080"))
 ```
 
-4 GB in 8-bit, no torch anywhere, the same `Client` on top. What the launcher must do and how
+llama-server fetches the file by that name on first start — 4 GB in 8-bit — and the reader
+fetches the head and the wording from the same repository. No torch anywhere, the same `Client`
+on top. What the launcher must do and how
 close the numbers stay: [docs/LAUNCHERS.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/LAUNCHERS.md).
 
 **Behind HTTP on this machine** — one command, and `Client()` finds it:
@@ -123,13 +126,16 @@ back under your names, and `tfu`, which Jev does not have, is asked as a `choice
 option and marked `native=False`. Errors arrive as `ApiError` with the status and the message,
 whichever shape the server gave them in.
 
-The first two download the checkpoint once — 7.5 GB, 3.8B parameters, derived from Qwen3.5-4B —
-and run it on a GPU; the numbers below were taken on a 16 GB consumer card. On CUDA, add the kernels the hybrid trunk wants — without them it falls
-back to a slow path and p50 triples:
+The container, the service and the in-process reader download the checkpoint once — 7.5 GB, 3.8B
+parameters, derived from Qwen3.5-4B — and run it on a GPU; the numbers below were taken on a
+16 GB consumer card. Outside the container, on CUDA, add the kernels the hybrid trunk wants —
+without them it falls back to a slow path and p50 triples:
 
 ```
 pip install flash-linear-attention fla-core
 ```
+
+They compile on first use and need a C compiler on the machine (`gcc`); the container has one.
 
 ## Start
 
