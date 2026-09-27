@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `docs/UI.md`: the page at `/admin` described, with screenshots of every scheme, of a service
+  with no model, and of the dark scheme. The page itself was looked at for the first time and
+  put right: labels in the diagrams ran out of their boxes, the serving block dumped forty
+  lines of JSON and is now a summary with the raw answer folded below, the model field cut its
+  value short. A scheme can be named in the address, `/admin#llama`.
+- The kernels are warmed at start on a GPU, so the first question takes 115 ms and not the
+  seconds their compilation takes.
+
 ## 1.2.1 — 2026-09-27
 
 The first version published as a wheel and an image; 1.2.0 was tagged and never uploaded.

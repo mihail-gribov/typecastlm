@@ -118,6 +118,19 @@ class Reader(Reading):
             raise ValueError(f"--max-state-tokens {self.max_state_tokens} is past what the model "
                              f"can attend to ({limit} positions)")
         self.check(strict=strict)
+        self._warm()
+
+    def _warm(self) -> None:
+        """One short pass at start, on a GPU: the linear-attention kernels compile the first
+        time they run, and that is seconds the first caller should not be the one to wait."""
+        if not str(self.device).startswith("cuda"):
+            return
+        try:
+            enc = self.tok(["warm"], return_tensors="pt", add_special_tokens=False).to(self.device)
+            with self.torch.no_grad():
+                self.model.model(**enc)
+        except Exception:                        # a warm-up that fails is a first request that is slow
+            pass
 
     @staticmethod
     def _without_fla() -> None:

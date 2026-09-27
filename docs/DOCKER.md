@@ -122,6 +122,10 @@ then reports `override: …` so a changed wording is visible rather than assumed
 
 ## Choosing in the browser
 
+![The page at /admin](img/admin-weights.png)
+
+The page is described in full, with every state, in [UI.md](UI.md).
+
 `http://localhost:8000/admin` draws the three schemes, with a form for each, and switches
 between them while the container runs: the old backend keeps answering until the new one is
 loaded, a switch that fails leaves the working one in place and says why, and the settings that

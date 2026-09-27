@@ -24,6 +24,11 @@
   form { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:14px; margin-top:12px }
   label { display:block; font-size:13px; color:var(--mute); margin:10px 0 2px } input, select { width:100%; padding:7px 9px; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:6px }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:0 14px } .hide { display:none }
+  .wide { grid-column:span 2 } @media (max-width:560px) { .wide { grid-column:span 1 } }
+  .hint { font-size:12px; color:var(--mute); margin:3px 0 0 }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 18px; margin:8px 0 0; padding:12px 14px; background:var(--card); border:1px solid var(--line); border-radius:10px }
+  dt { color:var(--mute); font-size:13px } dd { margin:0; font-size:14px; overflow-wrap:anywhere }
+  details { margin-top:10px } summary { cursor:pointer; color:var(--mute); font-size:13px }
   button { margin-top:14px; padding:8px 16px; font:inherit; font-weight:600; color:#fff; background:var(--acc); border:0; border-radius:6px; cursor:pointer } button:disabled { opacity:.5; cursor:default }
   code, pre { font:13px ui-monospace,SFMono-Regular,Menlo,monospace } pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; margin:8px 0 0 }
   .note { font-size:13px; color:var(--mute) } .err { color:var(--err) }
@@ -45,35 +50,35 @@
 <div class="schemes" id="schemes">
   <div class="scheme" data-b="local">
     <h3>1 · Weights here</h3>
-    <svg viewBox="0 0 320 120">
-      <rect class="box" x="8" y="42" width="70" height="36" rx="6"/><text class="lbl" x="43" y="58" text-anchor="middle">client</text><text class="sub" x="43" y="72" text-anchor="middle">Client()</text>
-      <path class="arr" d="M80 60 H118"/>
-      <rect class="box here" x="120" y="14" width="192" height="92" rx="8"/>
-      <text class="lbl" x="216" y="32" text-anchor="middle">typecastlm-serve</text>
-      <text class="sub" x="216" y="50" text-anchor="middle">prompt · head · temperatures</text>
-      <rect class="box" x="140" y="60" width="152" height="34" rx="6"/><text class="lbl" x="216" y="75" text-anchor="middle">trunk on this GPU</text><text class="sub" x="216" y="88" text-anchor="middle">weights from the Hub, torch</text>
+    <svg viewBox="0 0 340 120">
+      <rect class="box" x="4" y="42" width="54" height="36" rx="6"/><text class="lbl" x="31" y="58" text-anchor="middle">client</text><text class="sub" x="31" y="72" text-anchor="middle">Client()</text>
+      <path class="arr" d="M60 60 H110"/>
+      <rect class="box here" x="112" y="14" width="224" height="92" rx="8"/>
+      <text class="lbl" x="224" y="32" text-anchor="middle">typecastlm-serve</text>
+      <text class="sub" x="224" y="50" text-anchor="middle">prompt · head · temperatures</text>
+      <rect class="box" x="136" y="60" width="176" height="34" rx="6"/><text class="lbl" x="224" y="75" text-anchor="middle">trunk on this GPU</text><text class="sub" x="224" y="88" text-anchor="middle">weights from the Hub, torch</text>
     </svg>
     <p>Downloads the checkpoint from Hugging Face and runs it in this process. Needs a GPU with 16 GB and the <code>[server]</code> extra. Returns <code>logits</code> and the calibration.</p>
   </div>
   <div class="scheme" data-b="llama">
     <h3>2 · An embedding server</h3>
-    <svg viewBox="0 0 320 120">
-      <rect class="box" x="4" y="42" width="58" height="36" rx="6"/><text class="lbl" x="33" y="58" text-anchor="middle">client</text><text class="sub" x="33" y="72" text-anchor="middle">Client()</text>
-      <path class="arr" d="M64 60 H86"/>
-      <rect class="box here" x="88" y="22" width="118" height="76" rx="8"/><text class="lbl" x="147" y="42" text-anchor="middle">typecastlm-serve</text><text class="sub" x="147" y="58" text-anchor="middle">prompt · head</text><text class="sub" x="147" y="72" text-anchor="middle">temperatures</text><text class="sub" x="147" y="86" text-anchor="middle">no torch</text>
-      <path class="arr" d="M208 60 H228"/><text class="sub" x="218" y="52" text-anchor="middle">vector</text>
-      <rect class="box far" x="230" y="22" width="86" height="76" rx="8"/><text class="lbl" x="273" y="46" text-anchor="middle">llama-server</text><text class="sub" x="273" y="62" text-anchor="middle">GGUF trunk</text><text class="sub" x="273" y="76" text-anchor="middle">or vLLM, any GPU</text>
+    <svg viewBox="0 0 340 120">
+      <rect class="box" x="4" y="42" width="54" height="36" rx="6"/><text class="lbl" x="31" y="58" text-anchor="middle">client</text><text class="sub" x="31" y="72" text-anchor="middle">Client()</text>
+      <path class="arr" d="M60 60 H70"/>
+      <rect class="box here" x="72" y="22" width="112" height="76" rx="8"/><text class="lbl" x="128" y="42" text-anchor="middle">typecastlm-serve</text><text class="sub" x="128" y="58" text-anchor="middle">prompt · head</text><text class="sub" x="128" y="72" text-anchor="middle">temperatures</text><text class="sub" x="128" y="86" text-anchor="middle">no torch</text>
+      <path class="arr" d="M186 60 H224"/><text class="sub" x="205" y="52" text-anchor="middle">vector</text>
+      <rect class="box far" x="226" y="22" width="110" height="76" rx="8"/><text class="lbl" x="281" y="46" text-anchor="middle">llama-server</text><text class="sub" x="281" y="62" text-anchor="middle">GGUF trunk</text><text class="sub" x="281" y="76" text-anchor="middle">or vLLM · any GPU</text>
     </svg>
     <p>The trunk runs as a GGUF in llama-server (or vLLM over <code>/v1/embeddings</code>, unnormalised); this process applies the head. Same numbers within 0.014; this box needs no GPU.</p>
   </div>
   <div class="scheme" data-b="jev">
     <h3>3 · Jev, proxied</h3>
-    <svg viewBox="0 0 320 120">
-      <rect class="box" x="4" y="42" width="58" height="36" rx="6"/><text class="lbl" x="33" y="58" text-anchor="middle">client</text><text class="sub" x="33" y="72" text-anchor="middle">Client()</text>
-      <path class="arr" d="M64 60 H86"/>
-      <rect class="box here" x="88" y="22" width="118" height="76" rx="8"/><text class="lbl" x="147" y="42" text-anchor="middle">typecastlm-serve</text><text class="sub" x="147" y="58" text-anchor="middle">translates tfu, levels</text><text class="sub" x="147" y="72" text-anchor="middle">passes the rest</text><text class="sub" x="147" y="86" text-anchor="middle">no model here</text>
-      <path class="arr" d="M208 60 H228"/><text class="sub" x="218" y="52" text-anchor="middle">https</text>
-      <rect class="box far" x="230" y="22" width="86" height="76" rx="8"/><text class="lbl" x="273" y="46" text-anchor="middle">api.typesafe.ai</text><text class="sub" x="273" y="62" text-anchor="middle">Jev</text><text class="sub" x="273" y="76" text-anchor="middle">their key, their bill</text>
+    <svg viewBox="0 0 340 120">
+      <rect class="box" x="4" y="42" width="54" height="36" rx="6"/><text class="lbl" x="31" y="58" text-anchor="middle">client</text><text class="sub" x="31" y="72" text-anchor="middle">Client()</text>
+      <path class="arr" d="M60 60 H70"/>
+      <rect class="box here" x="72" y="22" width="112" height="76" rx="8"/><text class="lbl" x="128" y="42" text-anchor="middle">typecastlm-serve</text><text class="sub" x="128" y="58" text-anchor="middle">translates tfu, levels</text><text class="sub" x="128" y="72" text-anchor="middle">passes the rest</text><text class="sub" x="128" y="86" text-anchor="middle">no model here</text>
+      <path class="arr" d="M186 60 H224"/><text class="sub" x="205" y="52" text-anchor="middle">https</text>
+      <rect class="box far" x="226" y="22" width="110" height="76" rx="8"/><text class="lbl" x="281" y="46" text-anchor="middle">api.typesafe.ai</text><text class="sub" x="281" y="62" text-anchor="middle">Jev</text><text class="sub" x="281" y="76" text-anchor="middle">their key, their bill</text>
     </svg>
     <p>Every request goes to TypeSafe's Jev under their key. Probabilities come back and no <code>logits</code>; <code>tfu</code> is asked as a choice with a third option and says <code>native: false</code>.</p>
   </div>
@@ -82,20 +87,21 @@
 <form id="f" onsubmit="return apply(event)">
   <input type="hidden" id="backend" value="local">
   <div class="grid">
-    <div id="f-model"><label id="l-model">Model — Hub repository or directory</label><input id="model" placeholder="mihailgribov/typecastlm-qwen3.5-3.8b"></div>
+    <div id="f-model" class="wide"><label id="l-model">Model — Hub repository or directory</label><input id="model" placeholder="mihailgribov/typecastlm-qwen3.5-3.8b"><p class="hint" id="h-model"></p></div>
     <div id="f-endpoint" class="hide"><label id="l-endpoint">Address of the embedding server</label><input id="backend_endpoint" placeholder="http://127.0.0.1:8080"></div>
     <div id="f-api" class="hide"><label>Route it speaks</label><select id="api"><option value="llama">llama-server native /embedding</option><option value="openai">OpenAI-style /v1/embeddings (vLLM, TEI)</option></select></div>
     <div id="f-bkey" class="hide"><label id="l-bkey">Its key</label><input id="backend_key" type="password" placeholder="leave empty to keep the one stored"></div>
     <div id="f-device"><label>Device</label><select id="device"><option value="auto">auto (CUDA when there)</option><option value="cuda">cuda</option><option value="cpu">cpu (slow)</option></select></div>
     <div id="f-dtype"><label>dtype</label><select id="dtype"><option value="bfloat16">bfloat16 (as measured)</option><option value="float16">float16</option><option value="float32">float32</option></select></div>
-    <div id="f-mst"><label>State tokens read in full (empty: the checkpoint's 32768)</label><input id="max_state_tokens" type="number" min="64" placeholder="32768"></div>
+    <div id="f-mst"><label>State tokens read in full</label><input id="max_state_tokens" type="number" min="64" placeholder="32768"><p class="hint">Empty: the checkpoint's own limit.</p></div>
   </div>
   <button id="go" type="submit">Apply</button> <span id="msg" class="note"></span>
 </form>
 
 <h2>Now serving</h2>
-<pre id="health">…</pre>
-<p class="note">The same facts as <code>GET /health</code>. Settings that worked are written to the config file and read before the environment at the next start, so what is chosen here is what the box comes back with.</p>
+<dl id="summary"></dl>
+<details><summary>The raw answer of <code>GET /health</code></summary><pre id="health">…</pre></details>
+<p class="note"> Settings that worked are written to the config file and read before the environment at the next start, so what is chosen here is what the box comes back with.</p>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -113,25 +119,42 @@ function pick(b) {
   $('f-bkey').classList.toggle('hide', !(emb || jev));
   ['f-device','f-dtype'].forEach(i => $(i).classList.toggle('hide', b !== 'local'));
   $('f-mst').classList.toggle('hide', jev);
-  $('l-model').textContent = jev ? 'Upstream model name' : emb ? 'Model — repository:tag of the GGUF the server runs; the head and the wording come from the same repository' : 'Model — Hub repository or directory';
+  $('l-model').textContent = jev ? 'Upstream model name' : emb ? 'Model — repository:tag' : 'Model — Hub repository or directory';
+  $('h-model').textContent = jev ? 'A name their /v1/models lists.' : emb ? 'The tag names the GGUF the server runs; the head and the wording are fetched from the same repository.' : 'Downloaded once into the volume; a directory under /models is used as it is.';
   $('model').placeholder = jev ? 'jev-latest' : emb ? 'mihailgribov/typecastlm-qwen3.5-3.8b:Q8_0' : 'mihailgribov/typecastlm-qwen3.5-3.8b';
   $('l-endpoint').textContent = jev ? 'Upstream address' : 'Address of the embedding server';
   $('backend_endpoint').placeholder = jev ? 'https://api.typesafe.ai' : 'http://127.0.0.1:8080';
   $('l-bkey').textContent = jev ? 'Their API key' : 'Its key, if it asks for one';
   if (emb) $('api').value = b;
 }
-document.querySelectorAll('.scheme').forEach(e => e.addEventListener('click', () => pick(e.dataset.b)));
+document.querySelectorAll('.scheme').forEach(e => e.addEventListener('click', () => { pick(e.dataset.b); $('f').dataset.touched = '1'; history.replaceState(null, '', '#' + e.dataset.b); }));
+// A scheme in the address opens the page on it: /admin#llama, /admin#jev, /admin#local.
+const linked = () => ['local', 'llama', 'openai', 'jev'].includes(location.hash.slice(1)) ? location.hash.slice(1) : '';
 $('api').addEventListener('change', () => pick($('api').value));
 
 async function refresh() {
   try {
     const h = await (await fetch('/health')).json();
     $('health').textContent = JSON.stringify(h, null, 1);
+    const cal = Object.entries(h.calibration || {}).filter(([, v]) => v && v.temperature).map(([k, v]) => `${k.replace('_', ' ')} ${v.temperature}`).join(' · ');
+    const marks = (h.labels || []).filter(l => l.startsWith('mark_')).length, L = h.load || {};
+    const loaded = h.status !== 'error' || (h.labels || []).length > 0 || h.backend === 'jev';
+    const where = !loaded ? `${h.backend === 'local' ? 'weights here' : h.backend} — not loaded` : h.backend === 'local' ? [`weights here`, h.device, h.dtype].filter(Boolean).join(', ') : h.backend === 'jev' ? `proxied to ${h.device}` : `${h.backend} server at ${h.device}${h.dtype && h.dtype !== 'as served' ? ', ' + h.dtype : ''}`;
+    const rows = [['Model', h.name ? `${h.name}  (${h.model})` : h.model], ['Where it runs', where],
+      ['Wording', h.prompt || '—'], ['State limit', h.max_state_tokens ? `${h.max_state_tokens} tokens, longer states folded in the middle` : '—'],
+      ['Temperatures', cal || (h.backend === 'jev' && loaded ? 'none: the upstream calibrates' : '—')], ['Head', (h.labels || []).length ? `${h.labels.length} outputs: true, false, unsure and ${marks} marks` : (h.backend === 'jev' && loaded ? 'none: the upstream answers' : '—')],
+      ['Load', `${L.running ?? 0} of ${L.slots ?? 1} running, ${L.waiting ?? 0} of ${L.queue ?? 0} waiting, ${L.served ?? 0} served, ${L.avg_ms ?? 0} ms on average`],
+      ['Key required', h.auth ? 'yes' : 'no — anyone who reaches the port is answered'], ['Checks', Array.isArray(h.checks) ? h.checks.join('; ') : h.checks], ['Version', h.version]];
+    $('summary').replaceChildren(...rows.flatMap(([k, v]) => { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = k; dd.textContent = v; return [dt, dd]; }));
     const st = $('st'); st.textContent = h.status; st.className = 'status ' + h.status;
     $('stdetail').textContent = h.status_detail || (h.status === 'ready' ? `${h.backend} · ${h.name || h.model}` : '');
     const r = await fetch('/admin/config', {headers: hdr()});
     if (r.status === 401) { $('msg').textContent = 'the service asks for its API key — enter it above'; $('msg').className = 'note err'; return; }
     const c = (await r.json()).settings;
+    if (!$('f').dataset.touched && linked() && linked() !== c.backend) {
+      pick(linked()); $('f').dataset.touched = '1';
+      $('backend_key').placeholder = c.backend_key_set ? 'a key is stored; leave empty to keep it' : 'none stored';
+    }
     if (!$('f').dataset.touched) {
       pick(c.backend); $('model').value = c.model || ''; $('backend_endpoint').value = c.backend_endpoint || '';
       $('device').value = c.device || 'auto'; $('dtype').value = c.dtype || 'bfloat16'; $('max_state_tokens').value = c.max_state_tokens || '';

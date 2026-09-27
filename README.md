@@ -48,6 +48,11 @@ docker run -d --gpus all -p 127.0.0.1:8000:8000 -v typecastlm-hf:/data/hf ghcr.i
 open http://localhost:8000/admin
 ```
 
+![The page at /admin](https://raw.githubusercontent.com/mihail-gribov/typecastlm/main/docs/img/admin-weights.png)
+
+On a machine without a GPU leave `--gpus all` out: the container comes up either way, and says
+on that page what it could load. The page is described in [docs/UI.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/UI.md).
+
 ## Install
 
 There is no hosted endpoint: the weights are open and the service is yours to run. Python 3.10 or
@@ -390,6 +395,7 @@ The checkpoint is an ordinary classifier with 39 outputs, so `transformers` load
 
 ## Documents
 
+* [docs/UI.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/UI.md) — the page at `/admin`, with screenshots: the three schemes, the form, what Apply does
 * [docs/DOCKER.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/DOCKER.md) — the container: three places for the model, settings, the `/admin` page, compose files
 * [docs/API.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/API.md) — the HTTP contract, field for field, and [openapi.json](https://github.com/mihail-gribov/typecastlm/blob/main/docs/openapi.json)
 * [docs/MODELS.md](https://github.com/mihail-gribov/typecastlm/blob/main/docs/MODELS.md) — how a model is laid out on the Hub: one repository, a tag for the form, what must agree
