@@ -93,8 +93,8 @@ class Reader(Reading):
 
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        if not str(device).startswith("cuda"):
-            self._without_fla()
+        if not str(device).startswith("cuda") or env("NO_FLA"):
+            self._without_fla()              # off the GPU always; on it, to compare or to debug
 
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 

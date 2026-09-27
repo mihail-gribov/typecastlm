@@ -55,7 +55,7 @@ model runs on a machine without CUDA in Docker, and how one GPU serves several c
 | driver | an NVIDIA driver, and [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) so containers see it | nothing |
 | memory | 16 GB of VRAM holds the model and a 32k-token state | 16 GB of RAM |
 | disk | 8 GB for the image, 8 GB for the weights | the same |
-| a decision | 50 ms on short material, half a second at 4k tokens | about ten seconds on short material, on 24 cores |
+| a decision | 48 ms on 165 tokens, 0.3 s on 1000, 0.7 s on 3500; six questions about one 3500-token state, 0.85 s | about ten seconds on short material, on 24 cores |
 
 The toolkit is a repository and one package on Ubuntu:
 
@@ -97,6 +97,7 @@ names a backend in `.env` gets that backend.
 | `TYPECASTLM_DTYPE` | `bfloat16` | what the numbers were measured in |
 | `TYPECASTLM_MAX_STATE_TOKENS` | the checkpoint's 32768 | states past it are folded in the middle |
 | `TYPECASTLM_QUEUE` | 32 | requests allowed to wait for the model; the next one gets `529` with `Retry-After` |
+| `TYPECASTLM_NO_FLA` | empty | any value runs the trunk without the linear-attention kernels: three times slower on short material, the same numbers |
 | `TYPECASTLM_CONCURRENCY` | 1 local, 8 remote | requests on the backend at once; weights held here take one, a server with slots of its own or Jev take several |
 | `TYPECASTLM_CONFIG` | `/data/hf/typecastlm-config.json` | where `/admin` keeps what was chosen — in the `hf-cache` volume, beside the weights |
 | `HF_TOKEN` | empty | for a private Hub repository (the GGUF repository, while it is) |

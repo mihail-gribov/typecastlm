@@ -27,6 +27,13 @@ RUN pip install --retries 10 --timeout 120 torch==2.10.0
 COPY docker/requirements.txt docker/requirements.txt
 RUN pip install --retries 10 --timeout 120 -r docker/requirements.txt
 
+# A C compiler, for one thing: the linear-attention kernels are Triton, and Triton builds a
+# launcher stub with `cc` the first time a kernel runs. Without it the service loads, answers
+# /health, and fails its first question on a GPU with "Failed to find C compiler".
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Then the package itself, from this tree rather than from PyPI: the image tracks the checkout.
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY src src
@@ -51,4 +58,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
     CMD python -c "import os, sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('TYPECASTLM_PORT', '8000'), timeout=4).status == 200 else 1)"
 
-CMD ["typecastlm-serve"]
+# An entrypoint, so that flags can follow the image name: docker run … typecastlm --backend jev
+ENTRYPOINT ["typecastlm-serve"]

@@ -1,7 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 — 2026-09-27
 
+The first version published as a wheel and an image; 1.2.0 was tagged and never uploaded.
+
+- The image carries a C compiler. The linear-attention kernels are Triton, which builds a
+  launcher stub with `cc` when a kernel first runs; without one the container loaded, answered
+  `/health`, and failed its first question on a GPU. CPU checks could not see it.
+- `TYPECASTLM_NO_FLA` runs the trunk without those kernels, to compare or to debug. In the
+  container on a 16 GB card: 48 ms against 163 ms on 165 tokens, 682 ms against 1186 ms on 3500.
+- A bundle on the GPU: six questions about a 3500-token state in 844 ms, against 682 ms for one.
+- The image has an entrypoint, so flags follow its name: `docker run … typecastlm --backend jev`.
+- Switching away from weights held here frees the card: 7.3 GB to 0.2 GB on the way to the Jev
+  proxy, and back to the weights in ten seconds from the cache.
 - One repository for the model in every form. The GGUF files and `head.json` live beside the
   safetensors weights in `mihailgribov/typecastlm-qwen3.5-3.8b`, and a tag picks the form the way
   `llama-server -hf` takes it: `…:Q8_0` and `…:BF16` are the GGUFs, no tag is the weights.
