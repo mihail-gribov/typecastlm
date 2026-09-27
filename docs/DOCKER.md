@@ -147,7 +147,8 @@ For the sidecar, `.env` takes `LLAMA_GGUF` (`mihailgribov/typecastlm-qwen3.5-3.8
 `LLAMA_CTX` (the longest prompt it takes, 8192; 32768 for the model's full states, at more
 memory), `LLAMA_UBATCH` (the slice processed at once, 2048; the compute buffer grows with it,
 nine gigabytes at 8192), `LLAMA_PARALLEL` (its slots) and `LLAMA_CACHE_DIR` (a host directory
-in the Hub cache's layout, `~/.cache/huggingface/hub`, when the file is already there). Ollama
+in the Hub cache's layout, `~/.cache/huggingface/hub`, when the file is already there; their
+container runs as root and leaves root-owned files in a host directory mounted this way). Ollama
 is not an option: it normalises every embedding and the head cannot be applied to the result.
 
 ## What it serves

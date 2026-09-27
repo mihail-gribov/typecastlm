@@ -7,7 +7,12 @@
   `llama-server -hf` takes it: `…:Q8_0` and `…:BF16` are the GGUFs, no tag is the weights.
   `--model` and `TYPECASTLM_MODEL` take `repository[:tag]`; the service refuses a tagged name
   for weights held here, and for an embedding backend fetches the head and the wording from the
-  same repository. `scripts/publish_gguf.py` uploads the files.
+  same repository. `scripts/publish_gguf.py` uploads the files. `docs/MODELS.md` is the
+  convention, with what a model on another base has to supply.
+- `prompt.json` may carry `chat_frame`, the tokenizer's own rendering of the chat template, and
+  the launcher's reader uses it; its cached copies of `prompt.json` and `head.json` are checked
+  against the Hub by ETag, so a wording changed upstream is not read from a cache.
+- The image runs under any `--user`: a user name is in its environment, where torch looks for one.
 
 ## 1.2.0 — 2026-09-27
 

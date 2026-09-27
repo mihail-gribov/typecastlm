@@ -39,7 +39,10 @@ RUN useradd --create-home --uid 1000 typecast \
 USER typecast
 # Settings chosen in /admin live in the volume, beside the weights, so a restart keeps them.
 # (Set here, below the library layers: an ENV above them would rebuild all of them.)
-ENV TYPECASTLM_CONFIG=/data/hf/typecastlm-config.json
+# USER and LOGNAME let the container run under any --user: torch asks for a user name, and a uid
+# with no passwd entry has none.
+ENV TYPECASTLM_CONFIG=/data/hf/typecastlm-config.json \
+    USER=typecast LOGNAME=typecast
 VOLUME ["/data/hf"]
 EXPOSE 8000
 

@@ -101,17 +101,33 @@ class EmbeddingReader(Reading):
         if local.exists():
             return local
         cached = CACHE / self.name.replace("/", "--") / name
-        if not cached.exists():
-            cached.parent.mkdir(parents=True, exist_ok=True)
-            # A private repository needs the token; `HF_TOKEN` is where the Hub's own tools
-            # read it from, so a machine set up for them is set up for this.
-            tok = os.environ.get("HF_TOKEN", "")
+        mark = cached.with_name(name + ".etag")
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        # A private repository needs the token; `HF_TOKEN` is where the Hub's own tools read it
+        # from, so a machine set up for them is set up for this. The copy kept here is checked
+        # against the Hub's by its ETag: a wording that changed upstream must not go on being
+        # read from a cache, and a machine that is offline keeps what it has.
+        tok = os.environ.get("HF_TOKEN", "")
+        headers = {"Authorization": f"Bearer {tok}"} if tok else {}
+        if cached.exists() and mark.exists():
+            headers["If-None-Match"] = mark.read_text().strip()
+        try:
             r = self._s.get(HUB.format(repo=self.name, file=name), timeout=self.timeout,
-                            headers={"Authorization": f"Bearer {tok}"} if tok else {})
-            if r.status_code != 200:
-                raise FileNotFoundError(f"{name}: not beside the model and not on the Hub for "
-                                        f"{self.name} (HTTP {r.status_code}); pass it explicitly")
-            cached.write_bytes(r.content)
+                            headers=headers)
+        except Exception:
+            if cached.exists():
+                return cached
+            raise
+        if r.status_code == 304 and cached.exists():
+            return cached
+        if r.status_code != 200:
+            if cached.exists():
+                return cached
+            raise FileNotFoundError(f"{name}: not beside the model and not on the Hub for "
+                                    f"{self.name} (HTTP {r.status_code}); pass it explicitly")
+        cached.write_bytes(r.content)
+        if r.headers.get("ETag"):
+            mark.write_text(r.headers["ETag"])
         return cached
 
     # -- the launcher -------------------------------------------------------------------------
