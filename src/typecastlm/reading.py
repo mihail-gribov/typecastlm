@@ -137,6 +137,23 @@ class Reading:
             return ""
         return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
+    POSITIVE, NEGATIVE = ("true", "yes"), ("false", "no")
+
+    @classmethod
+    def two_criteria(cls, crit: dict) -> list[tuple[str, object]]:
+        """The two criteria of a yes/no question as `[("true", …), ("false", …)]`.
+
+        Keys decide when they name the sides — `true`/`false` or `yes`/`no`, any case — so a
+        caller that sorts its keys (JSON with `sort_keys`, which puts `false` first) is read
+        the right way round. Only keys that name nothing fall back to order, first = yes."""
+        items = [(str(k), v) for k, v in crit.items()]
+        low = [k.strip().lower() for k, _ in items]
+        pos = [i for i, k in enumerate(low) if k in cls.POSITIVE]
+        neg = [i for i, k in enumerate(low) if k in cls.NEGATIVE]
+        if len(pos) == 1 and len(neg) == 1:
+            return [("true", items[pos[0]][1]), ("false", items[neg[0]][1])]
+        return [("true", items[0][1]), ("false", items[1][1])]
+
     def prepare(self, state, q: dict) -> tuple[str, list[str], list[str] | None, dict]:
         """Prompt text, answer names, the marks that carry them if any, and the legend.
 
@@ -156,7 +173,7 @@ class Reading:
             if not isinstance(crit, dict) or len(crit) != 2:
                 raise ValueError("a yes/no question takes exactly two criteria; the third answer "
                                  "is read without being asked for")
-            t, f = [self.as_text(v) or default.get(str(k), str(k)) for k, v in crit.items()]
+            t, f = [self.as_text(v) or default.get(k, k) for k, v in self.two_criteria(crit)]
             return self.build(state, ask, t, f), list(self.EXPECTED), None, {}
         if crit is None:
             raise ValueError(f"a {kind} question takes `criteria`: the options it chooses among")

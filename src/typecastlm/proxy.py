@@ -100,8 +100,8 @@ class JevReader(Reading):
             kind = self.kind_of(q)
             crit = q.get("criteria")
             if kind == "tfu":
-                two = crit if isinstance(crit, dict) else {}
-                vals = list(two.values())
+                two = crit if isinstance(crit, dict) and len(crit) == 2 else {}
+                vals = [v for _, v in self.two_criteria(two)] if two else []
                 out[key] = {"type": "choice", "instructions": q.get("instructions"),
                             "criteria": {"true": vals[0] if len(vals) > 0 and vals[0] else CRITERIA_DEFAULT["true"],
                                          "false": vals[1] if len(vals) > 1 and vals[1] else CRITERIA_DEFAULT["false"],

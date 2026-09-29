@@ -34,7 +34,8 @@ Why this one:
 * **A third answer.** Two-answer readers must call something a yes; this one does not have to.
 * **Calibrated per mode** — a stated 0.8 comes out right about 80 % of the time, because each
   mode carries its own temperature, fitted and shipped with the weights (calibration error
-  0.011–0.052, and refittable on your own rows).
+  0.018–0.063 on FEVER, RTE and BoolQ, higher on material the model finds hard — 0.21 on WiC —
+  and refittable on your own rows).
 * **Yours to run** — open weights, one command for a local service, and a client with a single
   dependency for whatever talks to it.
 * **Your own decision model in one command, set up in the browser.** The
@@ -275,8 +276,8 @@ questions cost one state and twenty tails, and `input_tokens` says so.
 
 ## Numbers
 
-On public validation splits: AUC 0.939 on BoolQ, 0.955 on RTE and 0.943 on FEVER, where the third
-answer separates `NOT ENOUGH INFO` from decidable rows with AUC 0.713.
+On public validation splits: AUC 0.942 on BoolQ, 0.954 on RTE and 0.942 on FEVER, where the third
+answer separates `NOT ENOUGH INFO` from decidable rows with AUC 0.709.
 The full tables, the speed grid and what each was measured on are in the
 [model card](https://huggingface.co/mihailgribov/typecastlm-qwen3.5-3.8b).
 

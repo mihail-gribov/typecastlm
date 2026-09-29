@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2 — 2026-09-29
+
+- A small correction in how yes/no questions are read, and the model's calibration refit.
+
 ## 1.2.1 — 2026-09-27
 
 The first version published as a wheel and an image; 1.2.0 was tagged and never uploaded.
