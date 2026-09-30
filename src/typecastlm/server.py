@@ -80,6 +80,20 @@ def short_name(model: str) -> str:
     return split_tag(model)[0].rstrip("/").split("/")[-1] or model
 
 
+def mark_delta(model: str) -> dict:
+    """`mark_delta.json` beside the weights: {mark: [hidden_size floats]}, a fitted correction to
+    that mark's rows. Absent in checkpoints that read marks from the embedding as it is."""
+    path = Path(split_tag(model)[0])
+    if path.is_dir():
+        f = path / "mark_delta.json"
+        return json.loads(f.read_text("utf-8")) if f.exists() else {}
+    try:
+        from huggingface_hub import hf_hub_download
+        return json.loads(Path(hf_hub_download(split_tag(model)[0], "mark_delta.json")).read_text("utf-8"))
+    except Exception:  # the file is optional: no correction shipped
+        return {}
+
+
 class Reader(Reading):
     """The model, its prompt, and one method that turns a question into three numbers.
 
@@ -111,6 +125,7 @@ class Reader(Reading):
         self.marks = {n[len("mark_"):]: i for n, i in self.col.items()
                       if n.startswith("mark_")}
         self._rows: dict = {}                    # mark -> a row per surface form
+        self._delta = mark_delta(model)          # mark -> correction added to its rows, if shipped
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         limit = getattr(self.model.config, "max_position_embeddings", None)
@@ -259,7 +274,13 @@ class Reader(Reading):
             ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
                                   for x in (" " + mark, mark)) if len(t) == 1]
             emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
-            self._rows[mark] = self.torch.stack([emb[i].float() for i in ids]) if ids else None
+            rows = self.torch.stack([emb[i].float() for i in ids]) if ids else None
+            if rows is not None and mark in self._delta:
+                # a checkpoint may ship a fitted correction for a mark (mark_delta.json); it is
+                # added to every surface form, so reading the strongest form stays well defined
+                rows = rows + self.torch.tensor(self._delta[mark], dtype=rows.dtype,
+                                                device=rows.device)
+            self._rows[mark] = rows
         return self._rows[mark]
 
     def answer(self, state, q: dict) -> tuple[dict, int]:

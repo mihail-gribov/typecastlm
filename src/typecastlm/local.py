@@ -51,6 +51,14 @@ class Reader:
         self.names = [self.model.config.id2label[i]
                       for i in range(self.model.config.num_labels)]
         self._rows: dict[str, torch.Tensor | None] = {}   # mark -> a row per surface form
+        # an optional fitted correction per mark, added to every surface form of it
+        delta = (path / "mark_delta.json") if path.is_dir() else None
+        if delta is None:
+            try:
+                delta = Path(hf_hub_download(model, "mark_delta.json"))
+            except Exception:
+                delta = None
+        self._delta = json.loads(delta.read_text(encoding="utf-8")) if delta and delta.exists() else {}
         # The head emits one logit per answer and one per mark. A softmax over all of them is
         # meaningless — each mode normalises its own subset.
         self.cal = self.cfg.get("calibration", {})
@@ -93,7 +101,10 @@ class Reader:
             ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
                                   for x in (" " + mark, mark)) if len(t) == 1]
             emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
-            self._rows[mark] = torch.stack([emb[i].float() for i in ids]) if ids else None
+            rows = torch.stack([emb[i].float() for i in ids]) if ids else None
+            if rows is not None and mark in self._delta:
+                rows = rows + torch.tensor(self._delta[mark], dtype=rows.dtype, device=rows.device)
+            self._rows[mark] = rows
         return self._rows[mark]
 
     def _marks_cfg(self, key: str, default: str) -> str:
