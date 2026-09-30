@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0 — 2026-09-30
+
+- The model's head and calibration refit. `noul` and `tfu` now share one temperature, so `noul`
+  is exactly the yes/no part of `tfu` and the two never disagree.
+- This trades a little accuracy on BoolQ and RTE for calibration: the calibration error is lower on
+  every public pool in the model card, and the third answer reads better.
+
 ## 1.2.2 — 2026-09-29
 
 - A small correction in how yes/no questions are read, and the model's calibration refit.
