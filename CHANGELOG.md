@@ -6,6 +6,8 @@
   is exactly the yes/no part of `tfu` and the two never disagree.
 - This trades a little accuracy on BoolQ and RTE for calibration: the calibration error is lower on
   every public pool in the model card, and the third answer reads better.
+- The model repository now tags its versions: `v1.2.2` and `v1.3.0`. `main` is the latest; to keep
+  a version, pin it, e.g. `from_pretrained(…, revision="v1.2.2")`.
 
 ## 1.2.2 — 2026-09-29
 
