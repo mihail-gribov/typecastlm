@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0 — 2026-10-07
+
+- The model's head and calibration refit, with separation first: AUC 0.920 → 0.942 on BoolQ,
+  0.931 → 0.947 on RTE, 0.950 → 0.953 on FEVER; accuracy 0.856 → 0.872 on BoolQ and 0.856 → 0.877
+  on RTE.
+- The head and its temperatures were fitted on a pool about three times larger and broader than the
+  one behind 1.3.0.
+- `noul` answers more decisively: a clear case reads as a clear yes or no. Its calibration error is
+  higher than in 1.3.0; `tfu`, `choice` and `scale` stay calibrated, and `typecastlm.calibrate`
+  refits `noul` on your own rows.
+- No change to the API or the package: the published package reads 1.4.0 as it is. The model is
+  tagged `v1.4.0` on the Hub.
+
 ## 1.3.0 — 2026-09-30
 
 - The model's head and calibration refit. `noul` and `tfu` now share one temperature, so `noul`
