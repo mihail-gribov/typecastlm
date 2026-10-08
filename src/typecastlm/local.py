@@ -50,15 +50,9 @@ class Reader:
         self.trunk = self.model.model
         self.names = [self.model.config.id2label[i]
                       for i in range(self.model.config.num_labels)]
-        self._rows: dict[str, torch.Tensor | None] = {}   # mark -> a row per surface form
-        # an optional fitted correction per mark, added to every surface form of it
-        delta = (path / "mark_delta.json") if path.is_dir() else None
-        if delta is None:
-            try:
-                delta = Path(hf_hub_download(model, "mark_delta.json"))
-            except Exception:
-                delta = None
-        self._delta = json.loads(delta.read_text(encoding="utf-8")) if delta and delta.exists() else {}
+        self._rows: dict[str, torch.Tensor | None] = {}   # mark -> the rows that read it
+        self._head = {n[len("mark_"):]: i for i, n in enumerate(self.names) if n.startswith("mark_")}
+        self._tied = bool(getattr(self.model.config, "tie_word_embeddings", True))
         # The head emits one logit per answer and one per mark. A softmax over all of them is
         # meaningless — each mode normalises its own subset.
         self.cal = self.cfg.get("calibration", {})
@@ -86,25 +80,28 @@ class Reader:
 
     # -- marks ----------------------------------------------------------------------------------
     def _mark_rows(self, mark: str) -> torch.Tensor | None:
-        """The directions that read this mark, one per surface form, or None if it is not a token.
+        """The directions that read this mark, or None if there are none.
 
-        A mark row is the model's own output row for that token — that is how the head was packed
-        — so a mark the head does not carry is not a mark the model cannot read: the row is in the
-        embedding, and taking it from there gives the same number to the last bit.
-
-        A mark appears in text as `" A"` and as `"A"`, and both are usually single tokens of
-        different strength. The mode reads the strongest, never their mean: the forms are nearly
-        proportional but unequal, so averaging mixes an exact measurement with its weak copies
-        (0.858 against 0.873 on ARC).
+        A mark is read by the head: its `mark_*` row is the vector the model writes that mark
+        with. In a tied model the embedding is that same output matrix, so the mark's other
+        surface forms are rows of it too — `" A"` and `"A"` are usually both single tokens of
+        different strength — and a mark the head does not carry is still readable from there.
+        The strongest row is read, never their mean: the forms are nearly proportional but
+        unequal, so averaging mixes an exact measurement with its weak copies (0.858 against
+        0.873 on ARC). An untied model has only the head's row.
         """
         if mark not in self._rows:
-            ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
-                                  for x in (" " + mark, mark)) if len(t) == 1]
-            emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
-            rows = torch.stack([emb[i].float() for i in ids]) if ids else None
-            if rows is not None and mark in self._delta:
-                rows = rows + torch.tensor(self._delta[mark], dtype=rows.dtype, device=rows.device)
-            self._rows[mark] = rows
+            rows = []
+            if mark in self._head:
+                rows.append(self.model.score.weight[self._head[mark]].float())
+            if self._tied:
+                ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
+                                      for x in (" " + mark, mark)) if len(t) == 1]
+                emb = self.model.get_input_embeddings().weight
+                for e in (emb[i].float() for i in ids):     # the head's row is one of them
+                    if not any(torch.equal(e, r) for r in rows):
+                        rows.append(e)
+            self._rows[mark] = torch.stack(rows) if rows else None
         return self._rows[mark]
 
     def _marks_cfg(self, key: str, default: str, kind: str | None = None) -> str:

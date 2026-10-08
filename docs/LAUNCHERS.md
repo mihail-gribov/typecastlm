@@ -2,7 +2,7 @@
 
 The checkpoint is a trunk and a head. The trunk is the Qwen3.5 stack cut after block 27, an
 ordinary causal model any launcher that serves embeddings can run from a GGUF; the head is 39
-directions — three verdict rows and the embedding rows of the 36 marks — and applying it is 39
+directions — three verdict rows and the output rows of the 36 marks — and applying it is 39
 dot products. So the model installs like any other GGUF, and the reading happens in the client:
 
 ```

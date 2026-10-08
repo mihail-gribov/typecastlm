@@ -59,7 +59,7 @@ What is the model's own, and so has to be supplied with it, against what is alre
 |---|---|---|
 | chat frame | in `prompt.json` as `chat_frame`; the built-in copy is Qwen's and only a fallback | the base's own frame in its `prompt.json`; nothing in the code changes |
 | marks | checked against the tokenizer at start: a mark must be one token | the same check; which letters and digits qualify is the tokenizer's answer |
-| head | 3 verdict rows and the marks' embedding rows, `hidden_size` wide | the same shape at the base's width |
+| head | 3 verdict rows and the marks' output rows (the embedding rows, the base being tied), `hidden_size` wide | the same shape at the base's width; an untied base gives its `lm_head` rows, and the head is then all a mark is read from |
 | conversion to GGUF | the wrapper registers `Qwen3_5ForSequenceClassification` on the converter's Qwen3.5 class and passes `--no-mtp` | the base's classifier name on the base's converter class; whether llama.cpp knows the architecture is the first thing to find out |
 | reading a bundle from one pass | continues the hybrid trunk's linear layers from a cache with a patch transformers lacks | a plain transformer needs no patch: the standard cache continues it; the patch is installed only where the trunk has those layers |
 | linear-attention kernels | `flash-linear-attention`, hidden off the GPU | not needed by a plain transformer |

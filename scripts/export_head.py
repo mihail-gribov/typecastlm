@@ -2,9 +2,9 @@
 """Write the head as a file a client can read without torch: `head.json`.
 
 The GGUF carries the trunk only. What turns its vector into answers is 39 directions — the
-three verdict rows of the classifier and the embedding rows of the 36 marks, each mark in its
-two surface forms (`" A"` and `"A"`, read by the stronger) — and those are written here as
-plain float lists, ~2 MB, beside `prompt.json`. A reader with `requests` alone can then do the
+three verdict rows of the classifier and the rows of the 36 marks (the head's own; in a tied
+model each mark's two surface forms, `" A"` and `"A"`, read by the stronger) — and those are
+written here as plain float lists, ~2 MB, beside `prompt.json`. A reader with `requests` alone can then do the
 whole reading: prompt, vector from llama-server, 39 dot products, softmax at the mode's
 temperature.
 

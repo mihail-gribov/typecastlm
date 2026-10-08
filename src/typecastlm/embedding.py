@@ -2,7 +2,7 @@
 
 The checkpoint is a trunk and a head. The trunk is an ordinary Qwen3.5 stack that any launcher
 able to serve embeddings can run from a GGUF; the head is 39 directions — the three verdict rows
-and the embedding rows of the marks — and applying them is 39 dot products. So the model can be
+and the output rows of the marks — and applying them is 39 dot products. So the model can be
 installed like any other: `llama-server -m typecastlm-qwen3.5-3.8b-q8_0.gguf --embeddings`, and
 this reader does the rest with `requests` alone. The prompt is the one from `prompt.json`, the
 head comes from `head.json` beside it, and the answers are the service's, field for field.

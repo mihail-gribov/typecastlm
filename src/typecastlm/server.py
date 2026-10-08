@@ -80,20 +80,6 @@ def short_name(model: str) -> str:
     return split_tag(model)[0].rstrip("/").split("/")[-1] or model
 
 
-def mark_delta(model: str) -> dict:
-    """`mark_delta.json` beside the weights: {mark: [hidden_size floats]}, a fitted correction to
-    that mark's rows. Absent in checkpoints that read marks from the embedding as it is."""
-    path = Path(split_tag(model)[0])
-    if path.is_dir():
-        f = path / "mark_delta.json"
-        return json.loads(f.read_text("utf-8")) if f.exists() else {}
-    try:
-        from huggingface_hub import hf_hub_download
-        return json.loads(Path(hf_hub_download(split_tag(model)[0], "mark_delta.json")).read_text("utf-8"))
-    except Exception:  # the file is optional: no correction shipped
-        return {}
-
-
 class Reader(Reading):
     """The model, its prompt, and one method that turns a question into three numbers.
 
@@ -124,8 +110,8 @@ class Reader(Reading):
         self.col = {name: i for i, name in enumerate(self.labels)}
         self.marks = {n[len("mark_"):]: i for n, i in self.col.items()
                       if n.startswith("mark_")}
-        self._rows: dict = {}                    # mark -> a row per surface form
-        self._delta = mark_delta(model)          # mark -> correction added to its rows, if shipped
+        self._rows: dict = {}                    # mark -> the rows that read it
+        self._tied = bool(getattr(self.model.config, "tie_word_embeddings", True))
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         limit = getattr(self.model.config, "max_position_embeddings", None)
@@ -167,8 +153,8 @@ class Reader(Reading):
                        f"{list(self.EXPECTED)} in that order — the order is what carries the "
                        "meaning")
         if not self.marks:
-            # The modes read marks from the embedding, so a head without `mark_*` rows still
-            # answers a choice here. It is not the documented checkpoint, though: through the
+            # A tied model reads marks from the embedding too, so a head without `mark_*` rows
+            # still answers a choice here. It is not the documented checkpoint, though: through the
             # plain `text-classification` pipeline such a model can only answer yes or no.
             bad.append("no `mark_*` outputs: this is not the checkpoint the clients document")
         missing = [f for f in self.PROMPT_FIELDS if f not in self.prompt_cfg]
@@ -260,27 +246,27 @@ class Reader(Reading):
         return self.mark_rows(mark) is not None
 
     def mark_rows(self, mark: str):
-        """The directions that read this mark, one per surface form, or None if it is not a token.
+        """The directions that read this mark, or None if there are none.
 
-        A mark row is the model's own output row for that token — that is how the head was packed
-        — so a mark the head does not carry is still readable: the row is in the embedding, and
-        taking it from there gives the same number to the last bit.
-
-        A mark appears as `" A"` and as `"A"`, usually both single tokens and of different
-        strength. The strongest is read, never their mean: averaging mixes an exact measurement
-        with its weak copies (0.858 against 0.873 on ARC).
+        A mark is read by the head: its `mark_*` row is the vector the model writes that mark
+        with. In a tied model the embedding is that same output matrix, so the mark's other
+        surface forms (`" A"` and `"A"`, usually both single tokens of different strength) are
+        rows of it too, and a mark past the head is still readable from there. The strongest row
+        is read, never their mean: averaging mixes an exact measurement with its weak copies
+        (0.858 against 0.873 on ARC). An untied model has only the head's row.
         """
         if mark not in self._rows:
-            ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
-                                  for x in (" " + mark, mark)) if len(t) == 1]
-            emb = self.model.get_input_embeddings().weight      # tied, and where marks come from
-            rows = self.torch.stack([emb[i].float() for i in ids]) if ids else None
-            if rows is not None and mark in self._delta:
-                # a checkpoint may ship a fitted correction for a mark (mark_delta.json); it is
-                # added to every surface form, so reading the strongest form stays well defined
-                rows = rows + self.torch.tensor(self._delta[mark], dtype=rows.dtype,
-                                                device=rows.device)
-            self._rows[mark] = rows
+            rows = []
+            if mark in self.marks:
+                rows.append(self.model.score.weight[self.marks[mark]].float())
+            if self._tied:
+                ids = [t[0] for t in (self.tok(x, add_special_tokens=False)["input_ids"]
+                                      for x in (" " + mark, mark)) if len(t) == 1]
+                emb = self.model.get_input_embeddings().weight
+                for e in (emb[i].float() for i in ids):     # the head's row is one of them
+                    if not any(self.torch.equal(e, r) for r in rows):
+                        rows.append(e)
+            self._rows[mark] = self.torch.stack(rows) if rows else None
         return self._rows[mark]
 
     def answer(self, state, q: dict) -> tuple[dict, int]:
