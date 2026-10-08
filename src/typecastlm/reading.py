@@ -112,8 +112,10 @@ class Reading:
             ask = C.get("score_ask_digits", "Answer with the number of the level that rates it.")
         else:
             ask = C.get("score_ask_marks", "Answer with the letter of the level that rates it.")
+        # how an option is listed is the checkpoint's wording too; without the key, `A. text`
+        line = C.get("option_line", "{mark}. {text}")
         body = (f"<state>\n{self.fold(state)}\n</state>\n\n{instructions}\n\n"
-                + "\n".join(f"{m}. {d}" for m, (_, d) in zip(marks, options))
+                + "\n".join(line.format(mark=m, text=d) for m, (_, d) in zip(marks, options))
                 + f"\n\n{ask}")
         return self.render(C.get("system", self.CHOICE_SYSTEM), body) + self.prompt_cfg["tail"]
 

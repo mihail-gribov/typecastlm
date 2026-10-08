@@ -175,8 +175,10 @@ class Reader:
     def _pick(self, state: str, question: str, options: list[tuple[str, str]], ask: str,
               ordinal: bool) -> dict:
         marks = self._marks_for([o[0] for o in options], ordinal)
+        # how an option is listed is the checkpoint's wording too; without the key, `A. text`
+        line = self._marks_cfg("option_line", "{mark}. {text}")
         body = (f"<state>\n{self._fold(state)}\n</state>\n\n{question}\n\n"
-                + "\n".join(f"{m}. {desc}" for m, (_, desc) in zip(marks, options))
+                + "\n".join(line.format(mark=m, text=desc) for m, (_, desc) in zip(marks, options))
                 + f"\n\n{ask}")
         h = self._last(self._chat(self._marks_cfg("system", CHOICE_SYSTEM), body,
                                   self.cfg.get("tail", "Answer: ")))
