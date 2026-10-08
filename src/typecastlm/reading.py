@@ -105,19 +105,25 @@ class Reading:
 
     def build_marks(self, state: str, instructions: str, options: list[tuple[str, str]],
                     marks: list[str], ordinal: bool) -> str:
-        C = self.prompt_cfg.get("marks") or {}
+        M = self.prompt_cfg.get("marks") or {}
+        K = M.get("score" if ordinal else "choice") or {}
+        # a key under `marks.choice` / `marks.score` holds for that kind only, over `marks`; without
+        # either, the default every checkpoint before it was read with
+        C = lambda key, default: K.get(key, M.get(key, default))  # noqa: E731
         if not ordinal:
-            ask = C.get("choice_ask", "Answer with one letter.")
+            ask = C("choice_ask", "Answer with one letter.")
         elif marks[0].isdigit():
-            ask = C.get("score_ask_digits", "Answer with the number of the level that rates it.")
+            ask = C("score_ask_digits", "Answer with the number of the level that rates it.")
         else:
-            ask = C.get("score_ask_marks", "Answer with the letter of the level that rates it.")
-        # how an option is listed is the checkpoint's wording too; without the key, `A. text`
-        line = C.get("option_line", "{mark}. {text}")
+            ask = C("score_ask_marks", "Answer with the letter of the level that rates it.")
+        # how an option is listed and how the answer opens are the checkpoint's wording too;
+        # without the keys, `A. text` and the yes/no tail
+        line = C("option_line", "{mark}. {text}")
         body = (f"<state>\n{self.fold(state)}\n</state>\n\n{instructions}\n\n"
                 + "\n".join(line.format(mark=m, text=d) for m, (_, d) in zip(marks, options))
                 + f"\n\n{ask}")
-        return self.render(C.get("system", self.CHOICE_SYSTEM), body) + self.prompt_cfg["tail"]
+        return (self.render(C("system", self.CHOICE_SYSTEM), body)
+                + C("tail", self.prompt_cfg["tail"]))
 
     # -- the question ---------------------------------------------------------------------------
 

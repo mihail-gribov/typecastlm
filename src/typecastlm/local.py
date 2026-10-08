@@ -107,9 +107,13 @@ class Reader:
             self._rows[mark] = rows
         return self._rows[mark]
 
-    def _marks_cfg(self, key: str, default: str) -> str:
-        """Wording of the marks mode. It travels with the weights, like the two-criteria one."""
-        return (self.cfg.get("marks") or {}).get(key, default)
+    def _marks_cfg(self, key: str, default: str, kind: str | None = None) -> str:
+        """Wording of the marks mode. It travels with the weights, like the two-criteria one.
+
+        A key under `marks.choice` or `marks.score` holds for that kind only, over the same key in
+        `marks`; without either, the default — what every checkpoint before it was read with."""
+        m = self.cfg.get("marks") or {}
+        return (m.get(kind) or {}).get(key, m.get(key, default)) if kind else m.get(key, default)
 
     def _has_mark(self, mark: str) -> bool:
         return self._mark_rows(mark) is not None
@@ -175,13 +179,15 @@ class Reader:
     def _pick(self, state: str, question: str, options: list[tuple[str, str]], ask: str,
               ordinal: bool) -> dict:
         marks = self._marks_for([o[0] for o in options], ordinal)
-        # how an option is listed is the checkpoint's wording too; without the key, `A. text`
-        line = self._marks_cfg("option_line", "{mark}. {text}")
+        kind = "score" if ordinal else "choice"
+        # how an option is listed and how the answer opens are the checkpoint's wording too;
+        # without the keys, `A. text` and the yes/no tail
+        line = self._marks_cfg("option_line", "{mark}. {text}", kind)
         body = (f"<state>\n{self._fold(state)}\n</state>\n\n{question}\n\n"
                 + "\n".join(line.format(mark=m, text=desc) for m, (_, desc) in zip(marks, options))
                 + f"\n\n{ask}")
-        h = self._last(self._chat(self._marks_cfg("system", CHOICE_SYSTEM), body,
-                                  self.cfg.get("tail", "Answer: ")))
+        h = self._last(self._chat(self._marks_cfg("system", CHOICE_SYSTEM, kind), body,
+                                  self._marks_cfg("tail", self.cfg.get("tail", "Answer: "), kind)))
         z = [float((self._mark_rows(m) @ h.float()).max()) for m in marks]
         w = [v / self._temp("scale" if ordinal else "choice") for v in z]
         e = [math.exp(v - max(w)) for v in w]
@@ -194,16 +200,17 @@ class Reader:
         """Pick one of 2..26 options. `options` are `(name, description)`; names are yours and do
         not reach the prompt."""
         return self._pick(state, question, options,
-                          self._marks_cfg("choice_ask", "Answer with one letter."), ordinal=False)
+                          self._marks_cfg("choice_ask", "Answer with one letter.", "choice"),
+                          ordinal=False)
 
     def scale(self, state: str, question: str, levels: list[tuple[str, str]]) -> dict:
         """Pick a level of an ordinal rubric. `levels` are `(name, description)` in order."""
         marks = self._marks_for([k for k, _ in levels], ordinal=True)
         ask = (self._marks_cfg("score_ask_digits",
-                               "Answer with the number of the level that rates it.")
+                               "Answer with the number of the level that rates it.", "score")
                if marks[0].isdigit()
                else self._marks_cfg("score_ask_marks",
-                                    "Answer with the letter of the level that rates it."))
+                                    "Answer with the letter of the level that rates it.", "score"))
         return self._pick(state, question, levels, ask, ordinal=True)
 
     @torch.no_grad()
