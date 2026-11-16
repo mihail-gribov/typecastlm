@@ -44,4 +44,20 @@ def __getattr__(name: str):
                               "pip install 'typecastlm[local]'") from e
         return Reader
     raise AttributeError(name)
-__version__ = "1.2.2"
+
+
+def _register_task() -> None:
+    """The `decision` task of transformers' `pipeline`, when transformers is already in the
+    process. It is never imported from here: the client must not pull a deep-learning stack.
+    With the other import order, `import typecastlm.pipeline` registers it."""
+    import sys
+
+    if "transformers" in sys.modules:
+        try:
+            from . import pipeline  # noqa: F401
+        except Exception:           # torch absent or a transformers too old: the client still works
+            pass
+
+
+_register_task()
+__version__ = "1.3.0"

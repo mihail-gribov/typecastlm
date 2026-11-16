@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0 (package) — 2026-11-16
+
+- The `decision` task of transformers' `pipeline`: `import typecastlm.pipeline` (or `import typecastlm` after transformers) registers it, and `pipeline("decision", model=…)` answers `decide(state, question)` for all four question types with the reader's own prompt, rows and calibration. `Reader.around(model, tokenizer)` builds a reader around weights that are already loaded.
+- A checkpoint may write the answer slot in its chat template and ship an empty `tail` in `prompt.json`; the readers append nothing then, and plain `messages` sent to a server that applies the template read the same numbers. No change in the package: earlier releases read such a checkpoint correctly.
+
+- `prompt.json` calibration may carry an optional `shift` per mode (`verdict`, `three_answers`): it moves `true` against `false` in logit units after the temperature (the odds change by e^shift; `unsure` is not touched). Absent means 0, so every earlier checkpoint reads exactly as before.
+
 ## 1.4.0 — 2026-10-07
 
 - The model's head and calibration refit, with separation first: AUC 0.920 → 0.942 on BoolQ,

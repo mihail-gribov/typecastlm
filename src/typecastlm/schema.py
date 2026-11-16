@@ -194,6 +194,8 @@ class Load(BaseModel):
     queue: int = Field(..., description="How many may wait before the next gets 529.")
     served: int
     avg_ms: float = Field(..., description="Exponential mean of a request's time on the model.")
+    batch: dict | None = Field(None, description="With `--batch`: forward passes run, rows read, "
+                                                 "and rows per pass — the batch the load produced.")
 
 
 class Health(BaseModel):

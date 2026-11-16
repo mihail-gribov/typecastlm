@@ -200,8 +200,16 @@ class Reading:
         return float((self.prompt_cfg.get("calibration", {}).get(mode) or {})
                      .get("temperature", 1.0))
 
+    def shift(self, mode: str) -> float:
+        """An optional shift of `true` against `false`, in logit units after the temperature: `calibration.<mode>.shift` of `prompt.json`. Absent means 0, the reading of every earlier checkpoint."""
+        return float((self.prompt_cfg.get("calibration", {}).get(mode) or {}).get("shift", 0.0))
+
     def _soft(self, logits: dict, mode: str) -> dict:
         v = {k: z / self.temp(mode) for k, z in logits.items()}
+        s = self.shift(mode)
+        if s and "true" in v and "false" in v:      # true gains s/2, false loses s/2: the odds true:false move by e^s, `unsure` stays where it is
+            v["true"] += s / 2
+            v["false"] -= s / 2
         m = max(v.values())
         e = {k: math.exp(x - m) for k, x in v.items()}
         s = sum(e.values())

@@ -98,12 +98,30 @@ class Reader(Reading):
 
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+        tok = AutoTokenizer.from_pretrained(model)
+        net = AutoModelForSequenceClassification.from_pretrained(
+            model, dtype=getattr(torch, dtype), device_map=device)
+        self._bind(model, net, tok, max_state_tokens, strict, prompt)
+
+    @classmethod
+    def around(cls, net, tok, model: str | None = None, max_state_tokens: int | None = None,
+               strict: bool = True, prompt: str | Path | None = None) -> "Reader":
+        """A reader around weights that are already loaded, e.g. by a transformers pipeline.
+
+        `model` is the directory or Hub id the weights came from: `prompt.json` and `head.json`
+        are read from there, as when the reader loads the weights itself."""
+        self = cls.__new__(cls)
+        self._bind(model or net.config._name_or_path, net, tok, max_state_tokens, strict, prompt)
+        return self
+
+    def _bind(self, model: str, net, tok, max_state_tokens, strict, prompt) -> None:
+        import torch
+
         self.torch, self.name = torch, model
         self.served = short_name(model)
-        self.tok = AutoTokenizer.from_pretrained(model)
+        self.tok = tok
         self.tok.padding_side = "right"          # the head reads the rightmost non-pad token
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            model, dtype=getattr(torch, dtype), device_map=device).eval()
+        self.model = net.eval()
         self.model.requires_grad_(False)
         self.device = next(self.model.parameters()).device
         self.labels = [self.model.config.id2label[i] for i in range(self.model.config.num_labels)]
@@ -112,6 +130,7 @@ class Reader(Reading):
                       if n.startswith("mark_")}
         self._rows: dict = {}                    # mark -> the rows that read it
         self._tied = bool(getattr(self.model.config, "tie_word_embeddings", True))
+        self._extra = self._head_rows(model)     # an untied checkpoint may give a mark several rows (head.json); score.weight holds one per label
         self.prompt_cfg, self.prompt_source = self._prompt(model, prompt)
         self.max_state_tokens = max_state_tokens or self.prompt_cfg["max_state_tokens"]
         limit = getattr(self.model.config, "max_position_embeddings", None)
@@ -245,6 +264,26 @@ class Reader(Reading):
     def has_mark(self, mark: str) -> bool:
         return self.mark_rows(mark) is not None
 
+    def _head_rows(self, model: str) -> dict:
+        """Marks that have more than one row in `head.json`, for an UNTIED checkpoint only: mark -> [rows, hidden].
+
+        A checkpoint keeps one row per label in `score.weight` (the sequence classifier's shape). One that was trained with two rows per
+        mark (the two spellings of a letter, read by the stronger) lists them all in `head.json`, and they are used here. A tied model reads
+        its marks from the embeddings as before, and a head.json with one row per mark changes nothing: every earlier checkpoint reads as it did."""
+        if self._tied:
+            return {}
+        p = Path(model) / "head.json"
+        if not p.exists():
+            try:
+                from huggingface_hub import hf_hub_download
+                p = Path(hf_hub_download(model, "head.json"))
+            except Exception:
+                return {}
+        rows = json.loads(p.read_text(encoding="utf-8")).get("rows", {})
+        hidden = self.model.score.weight.shape[1]
+        return {n[len("mark_"):]: self.torch.tensor(r, dtype=self.torch.float32) for n, r in rows.items()
+                if n.startswith("mark_") and len(r) > 1 and all(len(x) == hidden for x in r)}
+
     def mark_rows(self, mark: str):
         """The directions that read this mark, or None if there are none.
 
@@ -255,6 +294,8 @@ class Reader(Reading):
         is read, never their mean: averaging mixes an exact measurement with its weak copies
         (0.858 against 0.873 on ARC). An untied model has only the head's row.
         """
+        if mark not in self._rows and mark in self._extra:
+            self._rows[mark] = self._extra[mark].to(self.device)
         if mark not in self._rows:
             rows = []
             if mark in self.marks:
@@ -291,7 +332,47 @@ class Reader(Reading):
         out["logits"] = logits
         return out
 
-    BATCH_ROWS = 16                              # tails read at once from one copy of the cache
+    def _mark_matrix(self):
+        """Every mark's rows stacked into one matrix, and each mark's slice of it: a batch of
+        marks questions is read with one product instead of one per mark and row."""
+        if getattr(self, "_marks_W", None) is None:
+            rows, at = [], {}
+            for c in dict.fromkeys(self.ORDINAL + self.LETTERS):
+                m = self.mark_rows(c)
+                if m is not None:
+                    at[c] = (sum(len(x) for x in rows), len(m))
+                    rows.append(m)
+            self._marks_W = self.torch.cat(rows).to(self.device) if rows else None
+            self._marks_at = at
+        return self._marks_W, self._marks_at
+
+    def read_rows(self, ids: list[list[int]], marks: list[list[str] | None]) -> list[list[float]]:
+        """Prompts of any questions, one right-padded pass: each row's logits, in the order of its
+        answer names — the three answers for a yes/no question, its marks for the others. The
+        verdict goes through `score` as `_answer_from` reads it; marks take the strongest row."""
+        T = self.torch
+        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
+        width = max(map(len, ids))
+        with T.no_grad():
+            batch = T.tensor([x + [pad] * (width - len(x)) for x in ids], device=self.device)
+            h = self.model.model(input_ids=batch).last_hidden_state
+            h = h[T.arange(len(ids), device=self.device),
+                  T.tensor([len(x) - 1 for x in ids], device=self.device)]
+            out: list = [None] * len(ids)
+            yn = [i for i, m in enumerate(marks) if m is None]
+            if yn:
+                Z = self.model.score(h[yn].to(self.model.score.weight.dtype))[:, :3].float().cpu()
+                for i, z in zip(yn, Z.tolist()):
+                    out[i] = z
+            mk = [i for i, m in enumerate(marks) if m is not None]
+            if mk:
+                W, at = self._mark_matrix()
+                Z = (h[mk].float() @ W.T).cpu()
+                for i, z in zip(mk, Z):
+                    out[i] = [float(z[at[m][0]: at[m][0] + at[m][1]].max()) for m in marks[i]]
+        return out
+
+    BATCH_ROWS = 16                             # tails read at once from one copy of the cache
 
     def answer_many(self, state, questions: dict) -> tuple[dict, int]:
         """Several questions about one state: the state is read once.
@@ -614,6 +695,8 @@ class Service:
             old, self.reader, self.cfg = self.reader, new, cfg
         self.status, self.detail, self.last_error, self.since = "ready", "", "", time.time()
         self.save()
+        if getattr(old, "batcher", None) is not None:
+            old.batcher.close()                  # its worker holds the old weights otherwise
         del old
         gc.collect()
         try:
@@ -625,7 +708,7 @@ class Service:
 
 
 def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEFAULT_QUEUE,
-              concurrency: int | None = None):
+              concurrency: int | None = None, batch: int = 1):
     """The Jev API, served from your own weights — or from an embedding server, or from Jev.
 
     The routes, the request body, the answer objects and the error codes are that API's; a client
@@ -638,6 +721,10 @@ def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEF
     list, or one string with commas): any of them opens the `/v1` and `/admin` routes, and
     without any the service answers anyone who can reach the port. `/health` and the `/admin`
     page itself never ask for a key.
+
+    `batch` above 1 pools single-question requests on weights held here into shared forward
+    passes of up to that many rows (`typecastlm.batching`); the requests on the model at once are
+    then as many, since they wait at the batcher rather than at the gate.
     """
     from fastapi import Depends, FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
@@ -653,9 +740,21 @@ def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEF
     # One request at a time on weights held here — two on one GPU do not finish sooner — and
     # several on a backend that queues for itself: a llama-server has its slots, Jev its own
     # capacity, and serialising them here would only add a line in front of theirs.
+    batch = max(1, int(batch or 1))
     if concurrency is None:
-        concurrency = 1 if (svc.cfg.get("backend") or "local") == "local" else 8
+        concurrency = (batch if (svc.cfg.get("backend") or "local") == "local" else 8)
     gate = Gate(queue, slots=concurrency)
+    made = threading.Lock()                      # one batcher per reader, a switch gets its own
+
+    def batcher(r: Reading):
+        if batch < 2 or not isinstance(r, Reader):
+            return None
+        with made:
+            if getattr(r, "batcher", None) is None:
+                from .batching import Batcher
+
+                r.batcher = Batcher(r, max_rows=batch)
+            return r.batcher
 
     app = FastAPI(
         title="typecastlm", version=_version(),
@@ -713,7 +812,9 @@ def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEF
             body = {**r.describe(), "name": r.served, "max_state_tokens": r.max_state_tokens,
                     "calibration": r.prompt_cfg.get("calibration", {}),
                     "checks": r.check(strict=False) or "ok"}
-        return {**body, "auth": bool(keys), "load": gate.load(), "version": app.version,
+        b = getattr(r, "batcher", None)
+        load = gate.load() | ({"batch": b.load()} if b is not None else {})
+        return {**body, "auth": bool(keys), "load": load, "version": app.version,
                 "status": st["status"], "status_detail": st["detail"]}
 
     guarded = dict(dependencies=[Depends(authorize)], tags=["v1"])
@@ -740,7 +841,8 @@ def build_app(reader, api_key: str | list[str] | set[str] = "", queue: int = DEF
         questions = {k: q.model_dump() for k, q in req.questions.items()}
         try:
             with gate:
-                answers, tokens = r.answer_many(req.state, questions)
+                b = batcher(r)
+                answers, tokens = (b or r.answer_many)(req.state, questions)
         except Busy as e:
             raise HTTPException(529, f"The service is at capacity ({gate.queue} waiting); "
                                      f"{e}.", headers={"Retry-After": str(e.wait)}) from e
@@ -827,6 +929,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", default=env("CONFIG"),
                     help="file the settings chosen in /admin are kept in; a flag or a variable "
                          "given here wins, the file fills in the rest")
+    ap.add_argument("--batch", type=int, default=int(env("BATCH", "1")),
+                    help="local backend: read up to this many single-question requests in one "
+                         "forward pass (1, the default, reads them one by one)")
     a = ap.parse_args(argv)
 
     try:
@@ -874,7 +979,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ready on {a.host}:{a.port} as {svc.reader.served}; {len(d['labels'])} labels; "
               f"{d['backend']} on {d['device']}; auth {'on' if a.api_key else 'OFF'}; "
               f"queue {a.queue}", flush=True)
-    uvicorn.run(build_app(svc, api_key=a.api_key, queue=a.queue, concurrency=a.concurrency),
+    uvicorn.run(build_app(svc, api_key=a.api_key, queue=a.queue, concurrency=a.concurrency,
+                          batch=a.batch),
                 host=a.host, port=a.port, log_level="info")
     return 0
 
